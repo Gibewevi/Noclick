@@ -1,0 +1,44 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# --- Environnements virtuels ---
+.venv/
+env/
+venv/
+ENV/
+*.env
+*.venv
+
+# --- Configs locales / OS ---
+.DS_Store
+Thumbs.db
+
+# --- Logs / sorties ---
+*.log
+*.tmp
+
+# --- PyInstaller / build ---
+build/
+dist/
+*.spec
+
+# --- Screenshots ou sorties locales ---
+/screenshots/
+*.png
+*.jpg
+*.jpeg
+
+# --- Éditeurs ---
+.vscode/
+.idea/
+*.code-workspace
+
+# --- Tests ---
+.coverage
+htmlcov/
+.cache/
+.pytest_cache/
