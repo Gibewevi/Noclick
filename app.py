@@ -761,3 +761,31 @@ class NoClicApp:
 
     def run(self):
         self.root.mainloop()
+
+
+# ---------- LANCEMENT EXPLICITE DE L’APPLICATION ----------
+if __name__ == "__main__":
+    import multiprocessing
+    # Important pour PyInstaller sur Windows quand des threads/process peuvent être lancés
+    multiprocessing.freeze_support()
+
+    try:
+        app = NoClicApp()
+        # Assure l'élévation initiale
+        app.root.after(300, app.root.lift)
+        app.run()
+    except Exception as e:
+        # Si build --console (debug), on verra la trace.
+        import traceback
+        traceback.print_exc()
+        # Si build --windowed, afficher un message d'erreur visible.
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            r = tk.Tk()
+            r.withdraw()
+            r.attributes("-topmost", True)
+            messagebox.showerror("NoClic - Erreur", f"{e}")
+            r.destroy()
+        except Exception:
+            pas
