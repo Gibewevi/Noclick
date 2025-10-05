@@ -1,0 +1,6 @@
+{
+  "voice_device_name": "Microphone (LCS_USB_Audio) (id:1)",
+  "voice_end_silence_secs": 1.6,
+  "voice_rms_threshold": 0.003,
+  "voice_paste_delay_secs": 2.5
+}
