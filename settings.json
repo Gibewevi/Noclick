@@ -2,5 +2,28 @@
   "voice_device_name": "Microphone (LCS_USB_Audio) (id:1)",
   "voice_end_silence_secs": 1.6,
   "voice_rms_threshold": 0.003,
-  "voice_paste_delay_secs": 2.5
+  "voice_paste_delay_secs": 2.5,
+  "active_extensions": [
+    "AUTO",
+    "SEL",
+    "SHOT",
+    "COL",
+    "DEL",
+    "COP",
+    "PYTH",
+    "DRG",
+    "COLA",
+    "ENT",
+    "VOICE",
+    "CLICD"
+  ],
+  "floating_extensions": [],
+  "floating_modules": [],
+  "config_states": [
+    1,
+    2,
+    1,
+    0
+  ],
+  "config_active": 1
 }

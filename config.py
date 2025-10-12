@@ -6,10 +6,15 @@ HUD_H            = 120
 HUD_MARGIN       = 12
 HUD_CORNER       = 8
 
-BTN_W            = 60
-BTN_H            = 28
+BTN_W            = 36
+BTN_H            = 36
 BTN_CORNER       = 6
 BTN_FONT         = ("Consolas", 11)
+
+# Plus button (circular)
+PLUS_SIZE        = 34
+PLUS_CORNER      = 17
+PLUS_FONT        = ("Consolas", 24, "bold")
 
 CLOSE_BTN_W      = 24
 CLOSE_BTN_H      = 22
@@ -26,6 +31,16 @@ BAR_DEFAULT      = "#1f6aa5"
 BAR_WARN         = "#f39c12"
 BAR_OK           = "#27ae60"
 BAR_ARM          = "#7f8c8d"
+
+# Bottom shelf (extensions)
+SHELF_PADY       = (4, 4)
+SHELF_CORNER     = 6
+SHELF_BTN_W      = 56
+SHELF_BTN_H      = 24
+SHELF_BTN_FONT   = ("Consolas", 10)
+SHELF_BTN_FG     = "#d35400"
+SHELF_BTN_HOVER  = "#e67e22"
+SHELF_BTN_TEXT   = "#ffffff"
 
 # ================== PARAMÈTRES LOGIQUES ==================
 USE_OS_SNIPPER    = False      # True => Win+Shift+S (copie gérée par l'OS)
@@ -56,3 +71,27 @@ COP_TIMEOUT_SECS  = COL_TIMEOUT_SECS
 # === DRG (drag maintenu) : armement avant mouseDown; release sur re-immobilité ===
 # On reprend le même temps d'armement que la sélection par défaut (modifiable).
 DRG_ARM_SECONDS   = SEL_ARM_SECONDS
+
+# === DEL (supprimer tout) : Ctrl+A puis supprimer ===
+DEL_ARM_SECONDS   = COLA_ARM_SECONDS
+DEL_TIMEOUT_SECS  = COLA_TIMEOUT_SECS
+
+# === ENT (Entrée) : appuie sur Entrée après immobilisation ===
+# Par défaut, on reprend la même temporisation que COL
+ENT_ARM_SECONDS   = COL_ARM_SECONDS
+ENT_TIMEOUT_SECS  = COL_TIMEOUT_SECS
+
+# === PYTH (write "python main.py" and execute) ===
+PYTH_ARM_SECONDS  = COLA_ARM_SECONDS
+PYTH_TIMEOUT_SECS = COLA_TIMEOUT_SECS
+
+# === SCROLL (défilement continu sur survol) ===
+# Pas trop rapide par défaut; ajustable plus tard via un menu Options
+# - SCROLL_STEP: nombre d'«encoches» par tick (positif = haut, négatif = bas)
+# - SCROLL_INTERVAL: délai entre deux ticks (secondes)
+SCROLL_STEP       = 1
+SCROLL_INTERVAL   = 0.35
+
+# === CLICD (clic droit après immobilisation) ===
+CLICD_ARM_SECONDS = COL_ARM_SECONDS
+CLICD_TIMEOUT_SECS = COL_TIMEOUT_SECS

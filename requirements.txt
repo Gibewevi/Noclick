@@ -2,3 +2,8 @@ customtkinter
 pyautogui
 Pillow
 pywin32
+cairosvg
+svg.path
+sounddevice
+numpy
+soundfile

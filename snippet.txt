@@ -1,0 +1,17 @@
+            pass
+        return False
+
+    def _start_drag(self, e):
+        # Déplacement seulement quand l'événement vient de l'entête
+        if hasattr(self, "_drag_header") and e.widget is not self._drag_header:
+        # Deplacement seulement si clic dans lentete (ou ses descendants)
+        if hasattr(self, "_drag_header"):
+            try:
+                if not self._is_descendant(self._drag_header, e.widget):
+                    self._drag_active = False
+                    return
+            except Exception:
+                pass
+
+    def _on_drag(self, e):
+        if not self._drag_active:

@@ -1,0 +1,16 @@
+    HUD_W, HUD_H, HUD_MARGIN, HUD_CORNER,
+    BTN_W, BTN_H, BTN_CORNER, BTN_FONT,
+    CLOSE_BTN_W, CLOSE_BTN_H, CLOSE_BTN_CORNER,
+    HEADER_PADY, ROW_PADY, HINT_PADY, BAR_PADY,
+    BAR_HEIGHT, BAR_CORNER, BAR_DEFAULT, BAR_OK, BAR_ARM,
+    USE_OS_SNIPPER, SHOT_ARM_SECONDS, SEL_ARM_SECONDS,
+    COL_ARM_SECONDS, COL_TIMEOUT_SECS,
+    COLA_ARM_SECONDS, COLA_TIMEOUT_SECS,
+    DWELL_DELAY_INIT, DEADZONE_RADIUS, MOVE_EPS,
+    COP_ARM_SECONDS, COP_TIMEOUT_SECS,
+    DRG_ARM_SECONDS,  # ← ajouté
+)
+
+from utils import (
+    inside_deadzone, kb_copy, kb_select_all, kb_paste, delete_or_backspace,
+    kb_copy_all,  # wrapper Ctrl+A puis Ctrl+C
