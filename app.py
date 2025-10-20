@@ -1,4 +1,14 @@
 # app.py — HUD + dwell + auto-click + VOICE + SEL + SHOT + COLA + COL + COP + DRG
+from gpt_voice import GptVoice  # module VOICE déjà OK
+from capture import screenshot_to_clipboard
+from utils import (
+    inside_deadzone,
+    kb_copy,
+    kb_select_all,
+    kb_paste,
+    delete_or_backspace,
+    kb_copy_all,  # wrapper Ctrl+A puis Ctrl+C
+)
 import customtkinter as ctk
 import pyautogui
 import time
@@ -9,28 +19,63 @@ import io
 import ctypes
 from ctypes import wintypes
 from pathlib import Path
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageColor
 
 from config import (
-    HUD_W, HUD_H, HUD_MARGIN, HUD_CORNER,
-    BTN_W, BTN_H, BTN_CORNER, BTN_FONT,
-    PLUS_SIZE, PLUS_CORNER, PLUS_FONT,
-    CLOSE_BTN_W, CLOSE_BTN_H, CLOSE_BTN_CORNER,
-    HEADER_PADY, ROW_PADY, HINT_PADY, BAR_PADY,
-    BAR_HEIGHT, BAR_CORNER, BAR_DEFAULT, BAR_OK, BAR_ARM,
-    SHELF_PADY, SHELF_CORNER, SHELF_BTN_W, SHELF_BTN_H, SHELF_BTN_FONT,
-    SHELF_BTN_FG, SHELF_BTN_HOVER, SHELF_BTN_TEXT,
-    USE_OS_SNIPPER, SHOT_ARM_SECONDS, SEL_ARM_SECONDS,
-    COL_ARM_SECONDS, COL_TIMEOUT_SECS,
-    COLA_ARM_SECONDS, COLA_TIMEOUT_SECS,
-    DWELL_DELAY_INIT, DEADZONE_RADIUS, MOVE_EPS,
-    COP_ARM_SECONDS, COP_TIMEOUT_SECS,
+    HUD_W,
+    HUD_H,
+    HUD_MARGIN,
+    HUD_CORNER,
+    BTN_W,
+    BTN_H,
+    BTN_CORNER,
+    BTN_FONT,
+    PLUS_SIZE,
+    PLUS_CORNER,
+    PLUS_FONT,
+    CLOSE_BTN_W,
+    CLOSE_BTN_H,
+    CLOSE_BTN_CORNER,
+    HEADER_PADY,
+    ROW_PADY,
+    HINT_PADY,
+    BAR_PADY,
+    BAR_HEIGHT,
+    BAR_CORNER,
+    BAR_DEFAULT,
+    BAR_OK,
+    BAR_ARM,
+    SHELF_PADY,
+    SHELF_CORNER,
+    SHELF_BTN_W,
+    SHELF_BTN_H,
+    SHELF_BTN_FONT,
+    SHELF_BTN_FG,
+    SHELF_BTN_HOVER,
+    SHELF_BTN_TEXT,
+    USE_OS_SNIPPER,
+    SHOT_ARM_SECONDS,
+    SEL_ARM_SECONDS,
+    COL_ARM_SECONDS,
+    COL_TIMEOUT_SECS,
+    COLA_ARM_SECONDS,
+    COLA_TIMEOUT_SECS,
+    DWELL_DELAY_INIT,
+    DEADZONE_RADIUS,
+    MOVE_EPS,
+    COP_ARM_SECONDS,
+    COP_TIMEOUT_SECS,
     DRG_ARM_SECONDS,
-    DEL_ARM_SECONDS, DEL_TIMEOUT_SECS,
-    ENT_ARM_SECONDS, ENT_TIMEOUT_SECS,
-    PYTH_ARM_SECONDS, PYTH_TIMEOUT_SECS,
-    SCROLL_STEP, SCROLL_INTERVAL,
-    CLICD_ARM_SECONDS, CLICD_TIMEOUT_SECS,
+    DEL_ARM_SECONDS,
+    DEL_TIMEOUT_SECS,
+    ENT_ARM_SECONDS,
+    ENT_TIMEOUT_SECS,
+    PYTH_ARM_SECONDS,
+    PYTH_TIMEOUT_SECS,
+    SCROLL_STEP,
+    SCROLL_INTERVAL,
+    CLICD_ARM_SECONDS,
+    CLICD_TIMEOUT_SECS,
 )
 
 WM_MOUSEWHEEL = 0x020A
@@ -39,17 +84,9 @@ SMTO_ABORTIFHUNG = 0x0002
 SMTO_NORMAL = 0x0000
 GA_ROOT = 2
 
-from utils import (
-    inside_deadzone, kb_copy, kb_select_all, kb_paste, delete_or_backspace,
-    kb_copy_all,  # wrapper Ctrl+A puis Ctrl+C
-)
-
-from capture import screenshot_to_clipboard
-from gpt_voice import GptVoice  # module VOICE déjà OK
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | [%(name)s] %(message)s"
+    level=logging.INFO, format="%(asctime)s | %(levelname)s | [%(name)s] %(message)s"
 )
 log = logging.getLogger("APP")
 
@@ -70,8 +107,20 @@ class NoClicApp:
 
         # --- SEL state ---
         self.selection_mode = False
-        self.selection_phase_down = False  # False=pas encore appuyé ; True=mouseDown fait
+        self.selection_phase_down = (
+            False  # False=pas encore appuyé ; True=mouseDown fait
+        )
         self.selection_arm_until = 0.0
+
+        # --- SELCP state ---
+        self.selcp_mode = False
+        self.selcp_phase_down = False
+        self.selcp_arm_until = 0.0
+
+        # --- SELDL state ---
+        self.seldl_mode = False
+        self.seldl_phase_down = False
+        self.seldl_arm_until = 0.0
 
         # --- SHOT state (2 immobilités : lock puis validation) ---
         self.screenshot_mode = False
@@ -102,7 +151,9 @@ class NoClicApp:
         # --- DRG (drag maintenu) ---
         self.drg_mode = False
         self.drg_arm_until = 0.0
-        self.drg_holding = False  # False = pas encore mouseDown ; True = mouseDown maintenu
+        self.drg_holding = (
+            False  # False = pas encore mouseDown ; True = mouseDown maintenu
+        )
 
         # --- DEL (supprime tout) ---
         self.del_mode = False
@@ -119,12 +170,18 @@ class NoClicApp:
         self.pyth_arm_until = 0.0
         self.pyth_started_at = 0.0
 
+        # --- CSHARP (écrire et exécuter commande C#) ---
+        self.csharp_mode = False
+        self.csharp_arm_until = 0.0
+        self.csharp_started_at = 0.0
+
         # --- UI ---
         self.root = ctk.CTk()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        self.root.geometry(f"{HUD_W}x{HUD_H}+{sw-HUD_W-HUD_MARGIN}+{HUD_MARGIN}")
+        self.root.geometry(
+            f"{HUD_W}x{HUD_H}+{sw-HUD_W-HUD_MARGIN}+{HUD_MARGIN}")
 
         self._icon_cache = {}
         self._svg_warning_emitted = False
@@ -185,34 +242,47 @@ class NoClicApp:
         self.root.bind(
             "<Leave>",
             lambda e: (self._stop_all_scrolls(), self._exit_extension_hover()),
-            add="+"
+            add="+",
         )
 
         self.status_lbl = ctk.CTkLabel(self.header, text="ON")
         self.status_lbl.pack(side="left")
 
-        self.dot_lbl = ctk.CTkLabel(self.header, text="●", text_color="#2ecc71")
+        self.dot_lbl = ctk.CTkLabel(
+            self.header, text="●", text_color="#2ecc71")
         self.dot_lbl.pack(side="left", padx=(4, 8))
 
-        self.info_lbl = ctk.CTkLabel(self.header, text=self._info_text("CLICK"))
+        self.info_lbl = ctk.CTkLabel(
+            self.header, text=self._info_text("CLICK"))
         self.info_lbl.pack(side="left")
 
         self.close_btn = ctk.CTkButton(
-            self.header, text="X", width=CLOSE_BTN_W, height=CLOSE_BTN_H,
-            corner_radius=CLOSE_BTN_CORNER, fg_color="#aa3333",
-            hover_color="#992222", command=self.root.destroy
+            self.header,
+            text="X",
+            width=CLOSE_BTN_W,
+            height=CLOSE_BTN_H,
+            corner_radius=CLOSE_BTN_CORNER,
+            fg_color="#aa3333",
+            hover_color="#992222",
+            command=self.root.destroy,
         )
         self.close_btn.pack(side="right", padx=(4, 0))
 
         self.minimize_btn = ctk.CTkButton(
-            self.header, text="_", width=CLOSE_BTN_W, height=CLOSE_BTN_H,
-            corner_radius=CLOSE_BTN_CORNER, fg_color="#555555",
-            hover_color="#444444", command=self._toggle_minimize
+            self.header,
+            text="_",
+            width=CLOSE_BTN_W,
+            height=CLOSE_BTN_H,
+            corner_radius=CLOSE_BTN_CORNER,
+            fg_color="#555555",
+            hover_color="#444444",
+            command=self._toggle_minimize,
         )
         self.minimize_btn.pack(side="right", padx=(0, 4))
         self._update_minimize_button()
 
-        self.config_toggle_frame = ctk.CTkFrame(self.header, fg_color="transparent")
+        self.config_toggle_frame = ctk.CTkFrame(
+            self.header, fg_color="transparent")
         self.config_toggle_frame.pack(side="right", padx=(0, 10))
 
         self._config_states = [2] + [0] * 3  # 0=hidden, 1=visible, 2=active
@@ -221,14 +291,30 @@ class NoClicApp:
         self._build_config_toggles()
         row = ctk.CTkFrame(self.wrap, fg_color="transparent")
         row.pack(side="top", padx=8, pady=ROW_PADY)
-        self._make_dwell_button(row, "ON/OFF", self._toggle_running, ext_key="AUTO", hover_mode="instant")
-        self._make_dwell_button(row, "SEL",    self._toggle_selection, ext_key="SEL", hover_mode="instant")
-        self._make_dwell_button(row, "SHOT",   self._start_shot, ext_key="SHOT", hover_mode="instant")
-        self._make_dwell_button(row, "COL",    self._start_col, ext_key="COL", hover_mode="instant")    # coller simple
-        self._make_dwell_button(row, "COLA",   self._start_cola, ext_key="COLA", hover_mode="instant")   # coller en remplaçant tout (ex- COL)
-        self._make_dwell_button(row, "COP",    self._start_cop, ext_key="COP", hover_mode="instant")    # copier intégral
-        self._make_dwell_button(row, "DRG",    self._start_drg, ext_key="DRG", hover_mode="instant")    # ? nouveau bouton Drag maintenu
-        self._make_dwell_button(row, "VOICE",  self._start_voice, ext_key="VOICE", hover_mode="instant")
+        self._make_dwell_button(
+            row, "ON/OFF", self._toggle_running, ext_key="AUTO", hover_mode="instant"
+        )
+        self._make_dwell_button(
+            row, "SEL", self._toggle_selection, ext_key="SEL", hover_mode="instant"
+        )
+        self._make_dwell_button(
+            row, "SHOT", self._start_shot, ext_key="SHOT", hover_mode="instant"
+        )
+        self._make_dwell_button(
+            row, "COL", self._start_col, ext_key="COL", hover_mode="instant"
+        )  # coller simple
+        self._make_dwell_button(
+            row, "COLA", self._start_cola, ext_key="COLA", hover_mode="instant"
+        )  # coller en remplaçant tout (ex- COL)
+        self._make_dwell_button(
+            row, "COP", self._start_cop, ext_key="COP", hover_mode="instant"
+        )  # copier intégral
+        self._make_dwell_button(
+            row, "DRG", self._start_drg, ext_key="DRG", hover_mode="instant"
+        )  # ? nouveau bouton Drag maintenu
+        self._make_dwell_button(
+            row, "VOICE", self._start_voice, ext_key="VOICE", hover_mode="instant"
+        )
         try:
             self.root.after_idle(self._apply_pending_icon_updates)
         except Exception:
@@ -241,40 +327,105 @@ class NoClicApp:
 
         # Transform features into extensions (dynamic toolbar)
         self._extensions = {
-            "AUTO":  {"label": "ON/OFF",   "handler": self._toggle_running,
-                      "hint": "Active ou desactive l'autoclick"},
-            "SEL":   {"label": "SEL",      "handler": self._toggle_selection,
-                      "hint": "Selection par immobilisation puis copie"},
-            "SHOT":  {"label": "SHOT",     "handler": self._start_shot,
-                      "hint": "Prepare une capture d'ecran"},
-            "COL":   {"label": "COL",      "handler": self._start_col,
-                      "hint": "Colle le presse papier sans effacer"},
-            "COLA":  {"label": "COLA",     "handler": self._start_cola,
-                      "hint": "Colle apres selection totale"},
-            "COP":   {"label": "COP",      "handler": self._start_cop,
-                      "hint": "Copie integralement le texte cible"},
-            "CLICD": {"label": "CLICD",    "handler": self._start_clicd,
-                      "hint": "Clic droit apres immobilisation"},
-            "ENT":   {"label": "ENT",      "handler": self._start_ent,
-                      "hint": "Envoie la touche Entree"},
-            "PYTH":  {"label": "PYTH",     "handler": self._start_pyth,
-                      "command": "python main.py",
-                      "hint": "Tape puis lance python main.py"},
-            "DRG":   {"label": "DRG",      "handler": self._start_drg,
-                      "hint": "Maintient le clic pour deplacer"},
-            "VOICE": {"label": "VOICE",    "handler": self._start_voice,
-                      "hint": "Ouvre la dictee vocale"},
-            "DEL":   {"label": "DEL",      "handler": self._start_del,
-                      "hint": "Selectionne tout puis supprime"},
-            "SCROLU": {"label": "SCROLU",  "handler": None,
-                       "hint": "Defile vers le haut tant que survole"},
-            "D":      {"label": "SCROLL D","handler": None,
-                       "hint": "Defile vers le bas tant que survole"},
+            "AUTO": {
+                "label": "ON/OFF",
+                "handler": self._toggle_running,
+                "hint": "Active ou desactive l'autoclick",
+            },
+            "SEL": {
+                "label": "SEL",
+                "handler": self._toggle_selection,
+                "hint": "Selection par immobilisation puis copie",
+            },
+            "SELCP": {
+                "label": "SELCP",
+                "handler": self._start_selcp,
+                "hint": "Selection + copie automatique",
+            },
+            "SELDL": {
+                "label": "SELDL",
+                "handler": self._start_seldl,
+                "hint": "Selectionne et supprime le texte",
+            },
+            "SHOT": {
+                "label": "SHOT",
+                "handler": self._start_shot,
+                "hint": "Prepare une capture d'ecran",
+            },
+            "COL": {
+                "label": "COL",
+                "handler": self._start_col,
+                "hint": "Colle le presse papier sans effacer",
+            },
+            "COLA": {
+                "label": "COLA",
+                "handler": self._start_cola,
+                "hint": "Colle apres selection totale",
+            },
+            "COP": {
+                "label": "COP",
+                "handler": self._start_cop,
+                "hint": "Copie integralement le texte cible",
+            },
+            "CLICD": {
+                "label": "CLICD",
+                "handler": self._start_clicd,
+                "hint": "Clic droit apres immobilisation",
+            },
+            "ENT": {
+                "label": "ENT",
+                "handler": self._start_ent,
+                "hint": "Envoie la touche Entree",
+            },
+            "PYTH": {
+                "label": "PYTH",
+                "handler": self._start_pyth,
+                "command": "python main.py",
+                "hint": "Tape puis lance python main.py",
+            },
+            "CSHARP": {
+                "label": "CSH#",
+                "handler": self._start_csharp,
+                "command": "dotnet run --project ErgoClic.UI",
+                "hint": "Tape et lance dotnet run --project ErgoClic.UI",
+            },
+            "DRG": {
+                "label": "DRG",
+                "handler": self._start_drg,
+                "hint": "Maintient le clic pour deplacer",
+            },
+            "VOICE": {
+                "label": "VOICE",
+                "handler": self._start_voice,
+                "hint": "Ouvre la dictee vocale",
+            },
+            "DEL": {
+                "label": "DEL",
+                "handler": self._start_del,
+                "hint": "Selectionne tout puis supprime",
+            },
+            "SCROLU": {
+                "label": "SCROLU",
+                "handler": None,
+                "hint": "Defile vers le haut tant que survole",
+            },
+            "D": {
+                "label": "SCROLL D",
+                "handler": None,
+                "hint": "Defile vers le bas tant que survole",
+            },
         }
-        self._pyth_command = self._extensions.get("PYTH", {}).get("command", "python main.py")
+        self._pyth_command = self._extensions.get("PYTH", {}).get(
+            "command", "python main.py"
+        )
+        self._csharp_command = self._extensions.get("CSHARP", {}).get(
+            "command", "dotnet run --project ErgoClic.UI"
+        )
 
         # Load active extensions from settings.json
-        self._settings_path = Path(__file__).resolve().parent / "settings.json"
+        from utils import user_data_path
+        self._settings_path = user_data_path("settings.json")
+
         try:
             with open(self._settings_path, "r", encoding="utf-8") as f:
                 self._settings = json.load(f)
@@ -310,7 +461,9 @@ class NoClicApp:
                 else:
                     self._config_states[i] = 1
         saved_active = self._settings.get("config_active")
-        if isinstance(saved_active, int) and 0 <= saved_active < len(self._config_states):
+        if isinstance(saved_active, int) and 0 <= saved_active < len(
+            self._config_states
+        ):
             if self._config_states[saved_active] != 0:
                 if active_idx is not None and active_idx != saved_active:
                     self._config_states[active_idx] = 1
@@ -323,13 +476,16 @@ class NoClicApp:
             pass
 
         default_active = ["AUTO", "SEL", "COP", "CLICD"]
-        self.active_extensions = [k for k in self._settings.get("active_extensions", default_active)
-                                  if k in self._extensions]
+        self.active_extensions = [
+            k
+            for k in self._settings.get("active_extensions", default_active)
+            if k in self._extensions
+        ]
         self._ensure_unique_active_extensions()
 
         # Floating modules: each small toolbar can contain multiple extensions
-        self._modules = {}            # mod_id -> {win, frame, content, keys:list, orient:'h'|'v'}
-        self._mod_of_key = {}         # key -> mod_id
+        self._modules = {}  # mod_id -> {win, frame, content, keys:list, orient:'h'|'v'}
+        self._mod_of_key = {}  # key -> mod_id
         self._next_mod_id = 1
 
         # Replace static row with dynamic toolbar and plus button
@@ -345,7 +501,9 @@ class NoClicApp:
 
         self.hint.pack(side="top", padx=6, pady=HINT_PADY)
 
-        self.bar = ctk.CTkProgressBar(self.wrap, height=BAR_HEIGHT, corner_radius=BAR_CORNER)
+        self.bar = ctk.CTkProgressBar(
+            self.wrap, height=BAR_HEIGHT, corner_radius=BAR_CORNER
+        )
         self.bar.set(0.0)
         self.bar.configure(progress_color=BAR_DEFAULT)
         self.bar.pack(fill="x", padx=8, pady=BAR_PADY)
@@ -367,7 +525,9 @@ class NoClicApp:
             self._base_height = HUD_H
 
         # VOICE (module externe conservé)
-        self.gpt = GptVoice(self.root, self.wrap, self.hint, self.bar, self._set_mode_cb)
+        self.gpt = GptVoice(
+            self.root, self.wrap, self.hint, self.bar, self._set_mode_cb
+        )
 
         self._keep_on_top()
         threading.Thread(target=self._dwell_loop, daemon=True).start()
@@ -380,18 +540,24 @@ class NoClicApp:
 
         # Make label configure ASCII-safe to avoid encoding artifacts on Windows
         try:
+
             def _wrap_config_ascii(lbl):
                 _orig = lbl.configure
+
                 def _safe_config(**kwargs):
                     if "text" in kwargs and kwargs["text"] is not None:
                         try:
                             txt = str(kwargs["text"])
-                            txt = "".join(ch for ch in txt if ord(ch) < 128 or ch == "●")
+                            txt = "".join(
+                                ch for ch in txt if ord(ch) < 128 or ch == "●"
+                            )
                             kwargs["text"] = txt
                         except Exception:
                             pass
                     return _orig(**kwargs)
+
                 return _safe_config
+
             self.hint.configure = _wrap_config_ascii(self.hint)
             self.info_lbl.configure = _wrap_config_ascii(self.info_lbl)
         except Exception:
@@ -402,13 +568,18 @@ class NoClicApp:
             mods = self._settings.get("floating_modules")
             if isinstance(mods, list):
                 for m in mods:
-                    keys = [k for k in (m.get("keys") or []) if k in self._extensions]
+                    keys = [k for k in (m.get("keys") or [])
+                            if k in self._extensions]
                     if not keys:
                         continue
                     cfg = m.get("config", 0)
-                    mod_id = self._create_module_window(m.get("x"), m.get("y"), config_index=cfg)
+                    mod_id = self._create_module_window(
+                        m.get("x"), m.get("y"), config_index=cfg
+                    )
                     # orientation
-                    self._modules.get(mod_id, {}).update({"orient": (m.get("orient") or 'h')})
+                    self._modules.get(mod_id, {}).update(
+                        {"orient": (m.get("orient") or "h")}
+                    )
                     for k in keys:
                         self._add_key_to_module(mod_id, k)
                     self._repack_module_buttons(mod_id)
@@ -419,7 +590,8 @@ class NoClicApp:
                     k = item.get("key")
                     if not (k and k in self._extensions):
                         continue
-                    mod_id = self._create_module_window(item.get("x"), item.get("y"))
+                    mod_id = self._create_module_window(
+                        item.get("x"), item.get("y"))
                     self._add_key_to_module(mod_id, k)
                     self._repack_module_buttons(mod_id)
                     self._resize_module(mod_id)
@@ -549,7 +721,7 @@ class NoClicApp:
                 hover_color="#34495e",
                 border_width=2,
                 border_color="#3f3f46",
-                command=lambda i=idx: self._toggle_config_slot(i)
+                command=lambda i=idx: self._toggle_config_slot(i),
             )
             btn.pack(side="left", padx=4)
             self._config_buttons.append(btn)
@@ -615,7 +787,9 @@ class NoClicApp:
                 idx = len(self._config_states) - 1
             return idx
 
-        if self._config_active is not None and 0 <= self._config_active < len(self._config_states):
+        if self._config_active is not None and 0 <= self._config_active < len(
+            self._config_states
+        ):
             if self._config_states[self._config_active] == 2:
                 return self._config_active
 
@@ -646,12 +820,18 @@ class NoClicApp:
         state = int(self._config_states[index])
         try:
             if state == 2:
-                btn.configure(fg_color="#1f6aa5", hover_color="#155a8a", border_width=0)
+                btn.configure(fg_color="#1f6aa5",
+                              hover_color="#155a8a", border_width=0)
             elif state == 1:
-                btn.configure(fg_color="#2ecc71", hover_color="#27ae60", border_width=0)
+                btn.configure(fg_color="#2ecc71",
+                              hover_color="#27ae60", border_width=0)
             else:
-                btn.configure(fg_color="#1b1f24", hover_color="#34495e",
-                              border_width=2, border_color="#3f3f46")
+                btn.configure(
+                    fg_color="#1b1f24",
+                    hover_color="#34495e",
+                    border_width=2,
+                    border_color="#3f3f46",
+                )
         except Exception:
             pass
 
@@ -779,7 +959,10 @@ class NoClicApp:
                         existing_label = getattr(btn, "_icon_label", None)
                     except Exception:
                         existing_label = None
-                    if existing_label and getattr(existing_label, "winfo_exists", lambda: 0)():
+                    if (
+                        existing_label
+                        and getattr(existing_label, "winfo_exists", lambda: 0)()
+                    ):
                         try:
                             existing_label.destroy()
                         except Exception:
@@ -787,7 +970,9 @@ class NoClicApp:
                     enter_cb = getattr(btn, "_icon_enter_cb", None)
                     leave_cb = getattr(btn, "_icon_leave_cb", None)
                     click_cb = getattr(btn, "_icon_click_cb", None)
-                    label = self._create_icon_overlay(btn, icon, enter_cb, leave_cb, click_cb)
+                    label = self._create_icon_overlay(
+                        btn, icon, enter_cb, leave_cb, click_cb
+                    )
                     if label is None:
                         btn._icon_label = None
                     else:
@@ -808,7 +993,9 @@ class NoClicApp:
     def _resolve_button_icon(self, key):
         if not key:
             return None
-        cache_key = "".join(ch.lower() for ch in str(key) if ch.isalnum() or ch in ("-", "_"))
+        cache_key = "".join(
+            ch.lower() for ch in str(key) if ch.isalnum() or ch in ("-", "_")
+        )
         if not cache_key:
             return None
         cache = getattr(self, "_icon_cache", None)
@@ -864,12 +1051,15 @@ class NoClicApp:
             pass
         return ctk.CTkImage(light_image=image, dark_image=image, size=(size, size))
 
-    def _create_icon_overlay(self, button, icon, on_enter=None, on_leave=None, on_click=None):
+    def _create_icon_overlay(
+        self, button, icon, on_enter=None, on_leave=None, on_click=None
+    ):
         if not button or not icon:
             return None
         try:
             overlay = ctk.CTkLabel(button, text="", image=icon)
-            overlay.place(relx=0.0, rely=0.0, anchor="nw", relwidth=1.0, relheight=1.0)
+            overlay.place(relx=0.0, rely=0.0, anchor="nw",
+                          relwidth=1.0, relheight=1.0)
             bindings = (
                 ("<Enter>", on_enter),
                 ("<Leave>", on_leave),
@@ -981,9 +1171,14 @@ class NoClicApp:
                 for child in list(elem):
                     render_element(child, attrs)
                 return
-            stroke = parse_color(attrs.get("stroke"), parse_color(inherited.get("stroke"), default_color))
+            stroke = parse_color(
+                attrs.get("stroke"), parse_color(
+                    inherited.get("stroke"), default_color)
+            )
             stroke_width_attr = attrs.get(
-                "stroke-width", inherited.get("stroke-width", root.attrib.get("stroke-width", "2"))
+                "stroke-width",
+                inherited.get("stroke-width",
+                              root.attrib.get("stroke-width", "2")),
             )
             try:
                 stroke_width = float(stroke_width_attr)
@@ -1006,7 +1201,9 @@ class NoClicApp:
                 bbox = [x0, y0, x1, y1]
                 radius = max(0, int(round(rx * scale)))
                 if radius > 0:
-                    draw.rounded_rectangle(bbox, radius=radius, outline=stroke, width=stroke_px)
+                    draw.rounded_rectangle(
+                        bbox, radius=radius, outline=stroke, width=stroke_px
+                    )
                 else:
                     draw.rectangle(bbox, outline=stroke, width=stroke_px)
                 return
@@ -1066,7 +1263,9 @@ class NoClicApp:
                 for segment in path:
                     if isinstance(segment, Move):
                         if len(current) > 1:
-                            draw.line(current, fill=stroke, width=stroke_px, joint="curve")
+                            draw.line(
+                                current, fill=stroke, width=stroke_px, joint="curve"
+                            )
                         current = [to_point(segment.end)]
                         start_point = current[0]
                         continue
@@ -1074,7 +1273,9 @@ class NoClicApp:
                         if start_point is not None:
                             current.append(start_point)
                         if len(current) > 1:
-                            draw.line(current, fill=stroke, width=stroke_px, joint="curve")
+                            draw.line(
+                                current, fill=stroke, width=stroke_px, joint="curve"
+                            )
                         current = []
                         start_point = None
                         continue
@@ -1096,7 +1297,8 @@ class NoClicApp:
                     current.extend(samples)
 
                 if len(current) > 1:
-                    draw.line(current, fill=stroke, width=stroke_px, joint="curve")
+                    draw.line(current, fill=stroke,
+                              width=stroke_px, joint="curve")
                 return
 
             # Unsupported element types are ignored silently.
@@ -1114,7 +1316,13 @@ class NoClicApp:
         if not key:
             return
         defaults = {}
-        for opt in ("fg_color", "hover_color", "text_color", "border_color", "border_width"):
+        for opt in (
+            "fg_color",
+            "hover_color",
+            "text_color",
+            "border_color",
+            "border_width",
+        ):
             try:
                 defaults[opt] = button.cget(opt)
             except Exception:
@@ -1133,17 +1341,79 @@ class NoClicApp:
         except Exception:
             pass
         if key in self._highlighted_extensions:
-            self._apply_highlight_style(button)
+            self._apply_highlight_style(button, defaults)
 
-    def _apply_highlight_style(self, button):
+    def _update_button_icon(self, button, icon):
+        if not button:
+            return
         try:
-            button.configure(
-                fg_color=("#ffffff", "#ffffff"),
-                hover_color=("#f0f0f0", "#f0f0f0"),
-                text_color=("#1f6aa5", "#1f6aa5"),
-                border_color=("#1f6aa5", "#1f6aa5"),
-                border_width=2,
-            )
+            if icon:
+                button.configure(image=icon, compound="center")
+        except Exception:
+            pass
+        try:
+            overlay = getattr(button, "_icon_label", None)
+            if overlay and getattr(overlay, "winfo_exists", lambda: 0)():
+                overlay.configure(image=icon)
+        except Exception:
+            pass
+
+    def _make_tinted_icon(self, icon, color):
+        if not icon:
+            return None
+        try:
+            base = getattr(icon, "_light_image", None)
+            size = getattr(icon, "_size", None)
+            if base is None or size is None:
+                return None
+            rgba = ImageColor.getcolor(color, "RGB")
+            tint = Image.new("RGBA", base.size, (*rgba, 255))
+            alpha = base.split()[-1] if base.mode in ("RGBA", "LA") else None
+            if alpha is not None:
+                tint.putalpha(alpha)
+            else:
+                tint.putalpha(255)
+            return ctk.CTkImage(light_image=tint, dark_image=tint, size=size)
+        except Exception:
+            return None
+
+    def _apply_highlight_style(self, button, defaults=None):
+        try:
+            has_icon = bool(getattr(button, "_icon_image", None))
+            if has_icon:
+                highlight_icon = getattr(button, "_icon_image_highlight", None)
+                if highlight_icon is None:
+                    base_icon = getattr(button, "_icon_image", None)
+                    highlight_icon = self._make_tinted_icon(
+                        base_icon, "#1f6aa5")
+                    try:
+                        button._icon_image_highlight = highlight_icon
+                    except Exception:
+                        pass
+                if highlight_icon:
+                    self._update_button_icon(button, highlight_icon)
+                fg = None
+                hover = None
+                if isinstance(defaults, dict):
+                    fg = defaults.get("fg_color")
+                    hover = defaults.get("hover_color")
+                kwargs = {
+                    "border_color": ("#1f6aa5", "#1f6aa5"),
+                    "border_width": 2,
+                }
+                if fg not in (None, ""):
+                    kwargs["fg_color"] = fg
+                if hover not in (None, ""):
+                    kwargs["hover_color"] = hover
+                button.configure(**kwargs)
+            else:
+                button.configure(
+                    fg_color=("#ffffff", "#ffffff"),
+                    hover_color=("#f0f0f0", "#f0f0f0"),
+                    text_color=("#1f6aa5", "#1f6aa5"),
+                    border_color=("#1f6aa5", "#1f6aa5"),
+                    border_width=2,
+                )
         except Exception:
             pass
 
@@ -1156,6 +1426,9 @@ class NoClicApp:
                 kwargs[key] = value
             if kwargs:
                 button.configure(**kwargs)
+            if getattr(button, "_icon_image", None):
+                self._update_button_icon(
+                    button, getattr(button, "_icon_image"))
         except Exception:
             pass
 
@@ -1171,7 +1444,7 @@ class NoClicApp:
             except Exception:
                 continue
             if active:
-                self._apply_highlight_style(btn)
+                self._apply_highlight_style(btn, defaults)
             else:
                 self._restore_button_style(btn, defaults)
             kept.append((btn, defaults))
@@ -1216,12 +1489,14 @@ class NoClicApp:
             if getattr(self, "_in_extension_hover", False):
                 return
             self._in_extension_hover = True
-            self._hover_restore_delay = getattr(self, "dwell_delay", DWELL_DELAY_INIT)
+            self._hover_restore_delay = getattr(
+                self, "dwell_delay", DWELL_DELAY_INIT)
             try:
                 self._hover_restore_color = self.bar.cget("progress_color")
             except Exception:
                 self._hover_restore_color = BAR_DEFAULT
-            self.dwell_delay = max(3.0, self._hover_restore_delay or DWELL_DELAY_INIT)
+            self.dwell_delay = max(
+                3.0, self._hover_restore_delay or DWELL_DELAY_INIT)
             try:
                 self.bar.configure(progress_color=BAR_OK)
             except Exception:
@@ -1234,7 +1509,8 @@ class NoClicApp:
             if not getattr(self, "_in_extension_hover", False):
                 return
             self._in_extension_hover = False
-            restore_delay = getattr(self, "_hover_restore_delay", DWELL_DELAY_INIT)
+            restore_delay = getattr(
+                self, "_hover_restore_delay", DWELL_DELAY_INIT)
             self.dwell_delay = restore_delay if restore_delay else DWELL_DELAY_INIT
             color = getattr(self, "_hover_restore_color", BAR_DEFAULT)
             try:
@@ -1247,7 +1523,15 @@ class NoClicApp:
         except Exception:
             pass
 
-    def _make_dwell_button(self, parent, label, command, hint_text=None, ext_key=None, hover_mode="extension"):
+    def _make_dwell_button(
+        self,
+        parent,
+        label,
+        command,
+        hint_text=None,
+        ext_key=None,
+        hover_mode="extension",
+    ):
         icon = None
         for candidate in (ext_key, label):
             icon = self._resolve_button_icon(candidate)
@@ -1355,7 +1639,8 @@ class NoClicApp:
         btn._icon_leave_cb = on_leave
         btn._icon_click_cb = on_click
         if has_icon:
-            label = self._create_icon_overlay(btn, icon, on_enter, on_leave, on_click)
+            label = self._create_icon_overlay(
+                btn, icon, on_enter, on_leave, on_click)
             if label is None:
                 btn._icon_label = None
             else:
@@ -1364,8 +1649,14 @@ class NoClicApp:
         return btn
 
     def _make_scroll_button(self, parent, label, direction: str, hint_text=None):
-        btn = ctk.CTkButton(parent, text=label, width=BTN_W, height=BTN_H,
-                            corner_radius=BTN_CORNER, font=BTN_FONT)
+        btn = ctk.CTkButton(
+            parent,
+            text=label,
+            width=BTN_W,
+            height=BTN_H,
+            corner_radius=BTN_CORNER,
+            font=BTN_FONT,
+        )
         btn._scrolling = False
         btn._stop_flag = False
         btn._hover_hint = hint_text
@@ -1481,11 +1772,13 @@ class NoClicApp:
                 except Exception:
                     pass
 
-            alive = [b for b in buttons if getattr(b, "winfo_exists", lambda:0)() == 1]
+            alive = [b for b in buttons if getattr(
+                b, "winfo_exists", lambda: 0)() == 1]
             for index, btn in enumerate(alive):
                 row, col = divmod(index, cols)
                 try:
-                    btn.grid(row=row, column=col, padx=pad_x, pady=pad_y, sticky="n")
+                    btn.grid(row=row, column=col, padx=pad_x,
+                             pady=pad_y, sticky="n")
                 except Exception:
                     pass
 
@@ -1506,8 +1799,16 @@ class NoClicApp:
             cell_h = btn_req_h + pad_y * 2
             total_h = rows * cell_h
 
-            pad_top = SHELF_PADY[0] if isinstance(SHELF_PADY, (tuple, list)) else (SHELF_PADY or 0)
-            pad_bottom = SHELF_PADY[1] if isinstance(SHELF_PADY, (tuple, list)) else (SHELF_PADY or 0)
+            pad_top = (
+                SHELF_PADY[0]
+                if isinstance(SHELF_PADY, (tuple, list))
+                else (SHELF_PADY or 0)
+            )
+            pad_bottom = (
+                SHELF_PADY[1]
+                if isinstance(SHELF_PADY, (tuple, list))
+                else (SHELF_PADY or 0)
+            )
             row_height = max(0, total_h + pad_top + pad_bottom)
 
             row_frame = getattr(container, "master", None)
@@ -1655,7 +1956,8 @@ class NoClicApp:
             return False
         try:
             wparam = ctypes.c_int(delta << 16).value
-            lparam = ctypes.c_int(((int(y) & 0xffff) << 16) | (int(x) & 0xffff)).value
+            lparam = ctypes.c_int(((int(y) & 0xFFFF) << 16)
+                                  | (int(x) & 0xFFFF)).value
         except Exception:
             return False
         try:
@@ -1714,7 +2016,8 @@ class NoClicApp:
                 if self._is_window_valid(fresh) and not self._is_our_window(fresh):
                     self._last_outside_hwnd = fresh
                     self._scroll_target_hwnd = fresh
-                    self._scroll_target_point = (int(last_point[0]), int(last_point[1]))
+                    self._scroll_target_point = (
+                        int(last_point[0]), int(last_point[1]))
                     return True
         except Exception:
             pass
@@ -1722,10 +2025,15 @@ class NoClicApp:
         try:
             last_hwnd = getattr(self, "_last_outside_hwnd", None)
             last_point = getattr(self, "_last_outside_point", None)
-            if (self._is_window_valid(last_hwnd) and not self._is_our_window(last_hwnd)
-                    and isinstance(last_point, tuple) and len(last_point) == 2):
+            if (
+                self._is_window_valid(last_hwnd)
+                and not self._is_our_window(last_hwnd)
+                and isinstance(last_point, tuple)
+                and len(last_point) == 2
+            ):
                 self._scroll_target_hwnd = last_hwnd
-                self._scroll_target_point = (int(last_point[0]), int(last_point[1]))
+                self._scroll_target_point = (
+                    int(last_point[0]), int(last_point[1]))
                 return True
         except Exception:
             pass
@@ -1739,7 +2047,10 @@ class NoClicApp:
                     fallback_point = (int(px), int(py))
                 self._last_outside_hwnd = fg
                 self._scroll_target_hwnd = fg
-                self._scroll_target_point = (int(fallback_point[0]), int(fallback_point[1]))
+                self._scroll_target_point = (
+                    int(fallback_point[0]),
+                    int(fallback_point[1]),
+                )
                 return True
         except Exception:
             pass
@@ -1757,23 +2068,46 @@ class NoClicApp:
         try:
             user32 = ctypes.windll.user32
             wparam = ctypes.c_int(delta << 16).value
-            lparam = ctypes.c_int(((int(point[1]) & 0xffff) << 16) | (int(point[0]) & 0xffff)).value
+            lparam = ctypes.c_int(
+                ((int(point[1]) & 0xFFFF) << 16) | (int(point[0]) & 0xFFFF)
+            ).value
             result = ctypes.c_ulong()
-            if user32.SendMessageTimeoutW(hwnd, WM_MOUSEWHEEL, wparam, lparam,
-                                          SMTO_ABORTIFHUNG | SMTO_NORMAL, 20, ctypes.byref(result)):
+            if user32.SendMessageTimeoutW(
+                hwnd,
+                WM_MOUSEWHEEL,
+                wparam,
+                lparam,
+                SMTO_ABORTIFHUNG | SMTO_NORMAL,
+                20,
+                ctypes.byref(result),
+            ):
                 return True
             parent = user32.GetParent(hwnd)
             visited = set()
             while parent and parent not in visited:
                 visited.add(parent)
-                if user32.SendMessageTimeoutW(parent, WM_MOUSEWHEEL, wparam, lparam,
-                                               SMTO_ABORTIFHUNG | SMTO_NORMAL, 20, ctypes.byref(result)):
+                if user32.SendMessageTimeoutW(
+                    parent,
+                    WM_MOUSEWHEEL,
+                    wparam,
+                    lparam,
+                    SMTO_ABORTIFHUNG | SMTO_NORMAL,
+                    20,
+                    ctypes.byref(result),
+                ):
                     return True
                 parent = user32.GetParent(parent)
             ancestor = user32.GetAncestor(hwnd, GA_ROOT)
             if ancestor and ancestor not in visited:
-                if user32.SendMessageTimeoutW(ancestor, WM_MOUSEWHEEL, wparam, lparam,
-                                              SMTO_ABORTIFHUNG | SMTO_NORMAL, 20, ctypes.byref(result)):
+                if user32.SendMessageTimeoutW(
+                    ancestor,
+                    WM_MOUSEWHEEL,
+                    wparam,
+                    lparam,
+                    SMTO_ABORTIFHUNG | SMTO_NORMAL,
+                    20,
+                    ctypes.byref(result),
+                ):
                     return True
         except Exception:
             pass
@@ -1839,11 +2173,13 @@ class NoClicApp:
                     if hint.winfo_manager() == "pack":
                         hint.pack_configure(before=bar)
                     else:
-                        hint.pack(side="top", padx=6, pady=HINT_PADY, before=bar)
+                        hint.pack(side="top", padx=6,
+                                  pady=HINT_PADY, before=bar)
                 except Exception:
                     try:
                         hint.pack_forget()
-                        hint.pack(side="top", padx=6, pady=HINT_PADY, before=bar)
+                        hint.pack(side="top", padx=6,
+                                  pady=HINT_PADY, before=bar)
                     except Exception:
                         pass
             else:
@@ -1851,7 +2187,8 @@ class NoClicApp:
                     if hint.winfo_manager() == "pack":
                         hint.pack_configure(after=toolbar)
                     else:
-                        hint.pack(side="top", padx=6, pady=HINT_PADY, after=toolbar)
+                        hint.pack(side="top", padx=6,
+                                  pady=HINT_PADY, after=toolbar)
                 except Exception:
                     try:
                         hint.pack_forget()
@@ -1865,7 +2202,6 @@ class NoClicApp:
                     pass
         except Exception:
             pass
-
 
     def _refresh_base_height(self):
         try:
@@ -1881,7 +2217,6 @@ class NoClicApp:
             self._resize_root_height()
         except Exception:
             pass
-
 
     def _ensure_unique_active_extensions(self):
         uniq = []
@@ -1904,16 +2239,19 @@ class NoClicApp:
             modules_out = []
             try:
                 for mod_id, m in (getattr(self, "_modules", {}) or {}).items():
-                    w = m.get("win"); keys = list(m.get("keys") or [])
+                    w = m.get("win")
+                    keys = list(m.get("keys") or [])
                     if not w or not keys:
                         continue
-                    modules_out.append({
-                        "x": int(w.winfo_x()),
-                        "y": int(w.winfo_y()),
-                        "keys": keys,
-                        "orient": m.get("orient", 'h'),
-                        "config": int(m.get("config", 0) or 0),
-                    })
+                    modules_out.append(
+                        {
+                            "x": int(w.winfo_x()),
+                            "y": int(w.winfo_y()),
+                            "keys": keys,
+                            "orient": m.get("orient", "h"),
+                            "config": int(m.get("config", 0) or 0),
+                        }
+                    )
             except Exception:
                 pass
             self._settings["floating_modules"] = modules_out
@@ -1922,12 +2260,16 @@ class NoClicApp:
             try:
                 for m in modules_out:
                     for k in m.get("keys", []) or []:
-                        floats.append({"key": k, "x": m.get("x", 0), "y": m.get("y", 0)})
+                        floats.append(
+                            {"key": k, "x": m.get("x", 0), "y": m.get("y", 0)}
+                        )
             except Exception:
                 pass
             self._settings["floating_extensions"] = floats
             try:
-                states_out = [int(max(0, min(2, s))) for s in (self._config_states or [])]
+                states_out = [
+                    int(max(0, min(2, s))) for s in (self._config_states or [])
+                ]
             except Exception:
                 states_out = [2, 0, 0, 0]
             if len(states_out) < 4:
@@ -1935,11 +2277,13 @@ class NoClicApp:
             else:
                 states_out = states_out[:4]
             self._settings["config_states"] = states_out
-            self._settings["config_active"] = self._config_active if self._config_active is not None else None
+            self._settings["config_active"] = (
+                self._config_active if self._config_active is not None else None
+            )
             with open(self._settings_path, "w", encoding="utf-8") as f:
                 json.dump(self._settings, f, ensure_ascii=False, indent=2)
 
-    # ----- end save_settings mods block ----
+        # ----- end save_settings mods block ----
         except Exception:
             log.exception("settings save failed")
 
@@ -1977,9 +2321,17 @@ class NoClicApp:
             # Special scroll buttons run while hovered
             if key in ("SCROLU", "D"):
                 direction = "up" if key == "SCROLU" else "down"
-                b = self._make_scroll_button(self.toolbar_row, ext["label"], direction, ext.get("hint"))
+                b = self._make_scroll_button(
+                    self.toolbar_row, ext["label"], direction, ext.get("hint")
+                )
             else:
-                b = self._make_dwell_button(self.toolbar_row, ext["label"], ext["handler"], ext.get("hint"), ext_key=key)
+                b = self._make_dwell_button(
+                    self.toolbar_row,
+                    ext["label"],
+                    ext["handler"],
+                    ext.get("hint"),
+                    ext_key=key,
+                )
             # Enable drag-out to create floating window
             try:
                 # Tag le bouton avec sa clé pour DRG depuis la toolbar
@@ -2000,8 +2352,13 @@ class NoClicApp:
         except Exception:
             PLUS_SIZE, PLUS_CORNER = 26, 13
         plus_btn = ctk.CTkButton(
-            self.toolbar_row, text="+", width=PLUS_SIZE, height=PLUS_SIZE,
-            corner_radius=PLUS_CORNER, command=self._toggle_shelf, font=PLUS_FONT
+            self.toolbar_row,
+            text="+",
+            width=PLUS_SIZE,
+            height=PLUS_SIZE,
+            corner_radius=PLUS_CORNER,
+            command=self._toggle_shelf,
+            font=PLUS_FONT,
         )
         plus_btn.pack(side="right", padx=(8, 4))
         self._toolbar_widgets.append(plus_btn)
@@ -2016,10 +2373,12 @@ class NoClicApp:
                 except Exception:
                     total_w += BTN_W + 8
             sw = self.root.winfo_screenwidth()
-            max_w = max(300, sw - HUD_MARGIN*2)
+            max_w = max(300, sw - HUD_MARGIN * 2)
             desired = min(max(total_w, HUD_W), max_w)
             cur_h = self.root.winfo_height()
-            self.root.geometry(f"{int(desired)}x{cur_h}+{self.root.winfo_x()}+{self.root.winfo_y()}")
+            self.root.geometry(
+                f"{int(desired)}x{cur_h}+{self.root.winfo_x()}+{self.root.winfo_y()}"
+            )
             self._last_width = int(desired)
         except Exception:
             pass
@@ -2030,7 +2389,8 @@ class NoClicApp:
                         self.root.after_cancel(self._toolbar_width_job)
                     except Exception:
                         pass
-            self._toolbar_width_job = self.root.after(50, self._ensure_toolbar_width)
+            self._toolbar_width_job = self.root.after(
+                50, self._ensure_toolbar_width)
         except Exception:
             pass
         try:
@@ -2052,8 +2412,10 @@ class NoClicApp:
             self.root.update_idletasks()
             needed = int(row.winfo_reqwidth()) + 16
             sw = self.root.winfo_screenwidth()
-            max_w = max(300, sw - HUD_MARGIN*2)
-            desired = min(max(needed, HUD_W, int(getattr(self, "_last_width", HUD_W))), max_w)
+            max_w = max(300, sw - HUD_MARGIN * 2)
+            desired = min(
+                max(needed, HUD_W, int(getattr(self, "_last_width", HUD_W))), max_w
+            )
             cur_h = self.root.winfo_height()
             x = self.root.winfo_x()
             y = self.root.winfo_y()
@@ -2084,7 +2446,9 @@ class NoClicApp:
 
         def _on_motion(e):
             try:
-                if button._drag_origin is None or key in getattr(self, "_mod_of_key", {}):
+                if button._drag_origin is None or key in getattr(
+                    self, "_mod_of_key", {}
+                ):
                     return
                 dx = abs(e.x_root - button._drag_origin[0])
                 dy = abs(e.y_root - button._drag_origin[1])
@@ -2093,21 +2457,26 @@ class NoClicApp:
                     button._dragging = True
                     button._suspended_for_drag = True
                     try:
-                        self._suspend_dwell_actions = max(0, int(self._suspend_dwell_actions)) + 1
+                        self._suspend_dwell_actions = (
+                            max(0, int(self._suspend_dwell_actions)) + 1
+                        )
                     except Exception:
                         self._suspend_dwell_actions = 1
                     # create a small ghost overlay inside the main window (not a new window)
                     try:
                         ghost = ctk.CTkFrame(self.root, corner_radius=8)
-                        label = ctk.CTkLabel(ghost, text=self._extensions[key]["label"]) 
+                        label = ctk.CTkLabel(
+                            ghost, text=self._extensions[key]["label"])
                         label.pack(padx=6, pady=4)
                         # place relative to root
                         rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
                         gx = max(0, e.x_root - rx + 8)
                         gy = max(0, e.y_root - ry + 8)
                         ghost.place(x=gx, y=gy)
-                        try: ghost.lift()
-                        except Exception: pass
+                        try:
+                            ghost.lift()
+                        except Exception:
+                            pass
                         button._ghost = ghost
                     except Exception:
                         button._ghost = None
@@ -2119,16 +2488,21 @@ class NoClicApp:
                         gx = max(0, e.x_root - rx + 8)
                         gy = max(0, e.y_root - ry + 8)
                         button._ghost.place_configure(x=gx, y=gy)
-                        try: button._ghost.lift()
-                        except Exception: pass
+                        try:
+                            button._ghost.lift()
+                        except Exception:
+                            pass
                     except Exception:
                         pass
                 # Show preview inside a module under cursor
                 try:
                     mod_id = self._find_module_at(e.x_root, e.y_root)
                     if mod_id is not None:
-                        orient = self._decide_drop_orientation(mod_id, e.x_root, e.y_root)
-                        self._show_module_preview(mod_id, orient, e.x_root, e.y_root)
+                        orient = self._decide_drop_orientation(
+                            mod_id, e.x_root, e.y_root
+                        )
+                        self._show_module_preview(
+                            mod_id, orient, e.x_root, e.y_root)
                     else:
                         self._clear_module_preview()
                 except Exception:
@@ -2146,7 +2520,12 @@ class NoClicApp:
                     by = self.wrap.winfo_rooty()
                     bw = self.wrap.winfo_width()
                     bh = self.wrap.winfo_height()
-                    outside = (e.x_root < bx) or (e.x_root > bx + bw) or (e.y_root < by) or (e.y_root > by + bh)
+                    outside = (
+                        (e.x_root < bx)
+                        or (e.x_root > bx + bw)
+                        or (e.y_root < by)
+                        or (e.y_root > by + bh)
+                    )
                     # If dropped inside the extensions shelf, remove one occurrence from toolbar
                     inside_shelf = False
                     try:
@@ -2155,7 +2534,9 @@ class NoClicApp:
                             sy = self._shelf_row.winfo_rooty()
                             sw = self._shelf_row.winfo_width()
                             sh = self._shelf_row.winfo_height()
-                            inside_shelf = (sx <= e.x_root <= sx + sw) and (sy <= e.y_root <= sy + sh)
+                            inside_shelf = (sx <= e.x_root <= sx + sw) and (
+                                sy <= e.y_root <= sy + sh
+                            )
                     except Exception:
                         inside_shelf = False
 
@@ -2163,7 +2544,8 @@ class NoClicApp:
                         if not from_shelf:
                             self._remove_one_from_toolbar(key)
                     elif outside:
-                        self._move_extension_to_floating(key, e.x_root, e.y_root)
+                        self._move_extension_to_floating(
+                            key, e.x_root, e.y_root)
             except Exception:
                 pass
             finally:
@@ -2178,7 +2560,9 @@ class NoClicApp:
                     pass
                 if getattr(button, "_suspended_for_drag", False):
                     try:
-                        self._suspend_dwell_actions = max(0, int(self._suspend_dwell_actions) - 1)
+                        self._suspend_dwell_actions = max(
+                            0, int(self._suspend_dwell_actions) - 1
+                        )
                     except Exception:
                         self._suspend_dwell_actions = 0
                     button._suspended_for_drag = False
@@ -2367,7 +2751,9 @@ class NoClicApp:
             if not drag["active"]:
                 return
             try:
-                win.geometry(f"+{win.winfo_x()+e.x-drag['x']}+{win.winfo_y()+e.y-drag['y']}")
+                win.geometry(
+                    f"+{win.winfo_x()+e.x-drag['x']}+{win.winfo_y()+e.y-drag['y']}"
+                )
             except Exception:
                 pass
 
@@ -2390,9 +2776,13 @@ class NoClicApp:
         # button + small close
         if key in ("SCROLU", "D"):
             direction = "up" if key == "SCROLU" else "down"
-            btn = self._make_scroll_button(content, ext["label"], direction, ext.get("hint"))
+            btn = self._make_scroll_button(
+                content, ext["label"], direction, ext.get("hint")
+            )
         else:
-            btn = self._make_dwell_button(content, ext["label"], ext["handler"], ext.get("hint"), ext_key=key)
+            btn = self._make_dwell_button(
+                content, ext["label"], ext["handler"], ext.get("hint"), ext_key=key
+            )
         # generous padding inside modules
         try:
             btn.pack_configure(side="left", padx=10, pady=6)
@@ -2401,14 +2791,21 @@ class NoClicApp:
 
         # Small overlay close at top-right of frame
         close = ctk.CTkButton(
-            frame, text="X", width=14, height=14, corner_radius=7,
-            fg_color="#aa3333", hover_color="#992222",
-            command=lambda k=key, w=win: self._close_floating(k, w)
+            frame,
+            text="X",
+            width=14,
+            height=14,
+            corner_radius=7,
+            fg_color="#aa3333",
+            hover_color="#992222",
+            command=lambda k=key, w=win: self._close_floating(k, w),
         )
         try:
             close.place(relx=1.0, rely=0.0, x=-2, y=2, anchor="ne")
-            try: close.lift()
-            except Exception: pass
+            try:
+                close.lift()
+            except Exception:
+                pass
         except Exception:
             close.pack(side="right", padx=(2, 4), pady=2)
 
@@ -2435,14 +2832,18 @@ class NoClicApp:
             except Exception:
                 pass
 
-            req_w = max(int(frame.winfo_reqwidth()), int(content.winfo_reqwidth()) + 2)
-            req_h = max(int(frame.winfo_reqheight()), int(content.winfo_reqheight()) + 2)
+            req_w = max(int(frame.winfo_reqwidth()),
+                        int(content.winfo_reqwidth()) + 2)
+            req_h = max(
+                int(frame.winfo_reqheight()), int(
+                    content.winfo_reqheight()) + 2
+            )
             # add a few pixels more for breathing room
             req_w += 6
             req_h += 6
             if x is None or y is None:
                 px, py = pyautogui.position()
-                x, y = max(0, px - req_w//2), max(0, py - req_h//2)
+                x, y = max(0, px - req_w // 2), max(0, py - req_h // 2)
             win.geometry(f"{req_w}x{req_h}+{int(x)}+{int(y)}")
             try:
                 win.minsize(req_w, req_h)
@@ -2471,51 +2872,80 @@ class NoClicApp:
         self._save_settings()
 
     # ---------------------- Modules (multi-extension toolbars) ----------------------
-    def _create_module_window(self, x: int = None, y: int = None, config_index: int | None = None):
+    def _create_module_window(
+        self, x: int = None, y: int = None, config_index: int | None = None
+    ):
         try:
             cfg_idx = self._resolve_target_config(config_index)
             win = ctk.CTkToplevel(self.root)
-            try: win.overrideredirect(True)
-            except Exception: pass
-            try: win.attributes("-topmost", True)
-            except Exception: pass
+            try:
+                win.overrideredirect(True)
+            except Exception:
+                pass
+            try:
+                win.attributes("-topmost", True)
+            except Exception:
+                pass
 
-            frame = ctk.CTkFrame(win, corner_radius=6, border_width=1, border_color="#3a3a3a")
+            frame = ctk.CTkFrame(
+                win, corner_radius=6, border_width=1, border_color="#3a3a3a"
+            )
             frame.pack(padx=1, pady=1)
-            try: frame.pack_propagate(True)
-            except Exception: pass
+            try:
+                frame.pack_propagate(True)
+            except Exception:
+                pass
 
             content = ctk.CTkFrame(frame, fg_color="transparent")
             content.pack(padx=4, pady=(8, 4))
 
             # drag support (frame + content)
-            drag = {"x":0, "y":0, "active":False}
-            def start_drag(e): drag.update({"x": e.x, "y": e.y, "active": True})
+            drag = {"x": 0, "y": 0, "active": False}
+
+            def start_drag(e):
+                drag.update({"x": e.x, "y": e.y, "active": True})
+
             def on_drag(e):
-                if not drag["active"]: return
+                if not drag["active"]:
+                    return
                 try:
-                    win.geometry(f"+{win.winfo_x()+e.x-drag['x']}+{win.winfo_y()+e.y-drag['y']}")
-                except Exception: pass
+                    win.geometry(
+                        f"+{win.winfo_x()+e.x-drag['x']}+{win.winfo_y()+e.y-drag['y']}"
+                    )
+                except Exception:
+                    pass
+
             def end_drag(_e):
                 drag["active"] = False
                 self._save_settings()
+
             for w in (frame, content):
                 try:
                     w.bind("<Button-1>", start_drag)
                     w.bind("<B1-Motion>", on_drag)
                     w.bind("<ButtonRelease-1>", end_drag)
-                except Exception: pass
+                except Exception:
+                    pass
 
             # close button
-            close = ctk.CTkButton(frame, text="X", width=14, height=14, corner_radius=7,
-                                   fg_color="#aa3333", hover_color="#992222",
-                                   command=lambda w=win: self._close_module_by_win(w))
+            close = ctk.CTkButton(
+                frame,
+                text="X",
+                width=14,
+                height=14,
+                corner_radius=7,
+                fg_color="#aa3333",
+                hover_color="#992222",
+                command=lambda w=win: self._close_module_by_win(w),
+            )
             try:
                 close.place(relx=1.0, rely=0.0, x=-2, y=2, anchor="ne")
-                try: close.lift()
-                except Exception: pass
+                try:
+                    close.lift()
+                except Exception:
+                    pass
             except Exception:
-                close.pack(side="right", padx=(2,4), pady=2)
+                close.pack(side="right", padx=(2, 4), pady=2)
 
             module_hwnd = None
             try:
@@ -2532,25 +2962,34 @@ class NoClicApp:
             # minimal geometry near pointer
             try:
                 win.update_idletasks()
-                req_w = max(int(frame.winfo_reqwidth()), int(content.winfo_reqwidth()) + 2)
-                req_h = max(int(frame.winfo_reqheight()), int(content.winfo_reqheight()) + 2)
+                req_w = max(
+                    int(frame.winfo_reqwidth()), int(
+                        content.winfo_reqwidth()) + 2
+                )
+                req_h = max(
+                    int(frame.winfo_reqheight()), int(
+                        content.winfo_reqheight()) + 2
+                )
                 if x is None or y is None:
                     px, py = pyautogui.position()
-                    x, y = max(0, px - req_w//2), max(0, py - req_h//2)
+                    x, y = max(0, px - req_w // 2), max(0, py - req_h // 2)
                 win.geometry(f"{req_w}x{req_h}+{int(x)}+{int(y)}")
             except Exception:
                 pass
 
             # register module
-            if not hasattr(self, "_modules"): self._modules = {}
-            if not hasattr(self, "_next_mod_id"): self._next_mod_id = 1
-            mod_id = self._next_mod_id; self._next_mod_id += 1
+            if not hasattr(self, "_modules"):
+                self._modules = {}
+            if not hasattr(self, "_next_mod_id"):
+                self._next_mod_id = 1
+            mod_id = self._next_mod_id
+            self._next_mod_id += 1
             self._modules[mod_id] = {
                 "win": win,
                 "frame": frame,
                 "content": content,
                 "keys": [],
-                "orient": 'h',
+                "orient": "h",
                 "hwnd": module_hwnd,
                 "config": cfg_idx,
             }
@@ -2562,11 +3001,15 @@ class NoClicApp:
 
     def _add_key_to_module(self, mod_id: int, key: str, index: int = None):
         module = (getattr(self, "_modules", {}) or {}).get(mod_id)
-        if not module: return
-        if not hasattr(self, "_mod_of_key"): self._mod_of_key = {}
-        if key in self._mod_of_key: return
+        if not module:
+            return
+        if not hasattr(self, "_mod_of_key"):
+            self._mod_of_key = {}
+        if key in self._mod_of_key:
+            return
         ext = self._extensions.get(key)
-        if not ext: return
+        if not ext:
+            return
         keys = module["keys"]
         if index is None or index < 0 or index > len(keys):
             keys.append(key)
@@ -2576,34 +3019,54 @@ class NoClicApp:
 
     def _resize_module(self, mod_id: int):
         module = (getattr(self, "_modules", {}) or {}).get(mod_id)
-        if not module: return
-        win = module["win"]; frame = module["frame"]; content = module["content"]
+        if not module:
+            return
+        win = module["win"]
+        frame = module["frame"]
+        content = module["content"]
         try:
             win.update_idletasks()
-            req_w = max(int(frame.winfo_reqwidth()), int(content.winfo_reqwidth()) + 2) + 6
-            req_h = max(int(frame.winfo_reqheight()), int(content.winfo_reqheight()) + 2) + 6
+            req_w = (
+                max(int(frame.winfo_reqwidth()), int(
+                    content.winfo_reqwidth()) + 2) + 6
+            )
+            req_h = (
+                max(int(frame.winfo_reqheight()), int(
+                    content.winfo_reqheight()) + 2)
+                + 6
+            )
             win.geometry(f"{req_w}x{req_h}+{win.winfo_x()}+{win.winfo_y()}")
-            try: win.minsize(req_w, req_h)
-            except Exception: pass
+            try:
+                win.minsize(req_w, req_h)
+            except Exception:
+                pass
         except Exception:
             pass
 
     def _repack_module_buttons(self, mod_id: int):
         module = (getattr(self, "_modules", {}) or {}).get(mod_id)
-        if not module: return
+        if not module:
+            return
         parent = module["content"]
         for w in list(parent.winfo_children()):
-            try: w.destroy()
-            except Exception: pass
-        side = 'left' if module.get('orient','h') == 'h' else 'top'
+            try:
+                w.destroy()
+            except Exception:
+                pass
+        side = "left" if module.get("orient", "h") == "h" else "top"
         for k in module.get("keys", []):
             ext = self._extensions.get(k)
-            if not ext: continue
+            if not ext:
+                continue
             if k in ("SCROLU", "D"):
                 direction = "up" if k == "SCROLU" else "down"
-                btn = self._make_scroll_button(parent, ext["label"], direction, ext.get("hint"))
+                btn = self._make_scroll_button(
+                    parent, ext["label"], direction, ext.get("hint")
+                )
             else:
-                btn = self._make_dwell_button(parent, ext["label"], ext["handler"], ext.get("hint"), ext_key=k)
+                btn = self._make_dwell_button(
+                    parent, ext["label"], ext["handler"], ext.get("hint"), ext_key=k
+                )
             try:
                 btn.pack_configure(side=side, padx=10, pady=6)
             except Exception:
@@ -2611,41 +3074,54 @@ class NoClicApp:
 
     def _decide_drop_orientation(self, mod_id: int, x: int, y: int) -> str:
         module = (getattr(self, "_modules", {}) or {}).get(mod_id)
-        if not module: return 'h'
+        if not module:
+            return "h"
         c = module["content"]
         try:
             cx, cy = c.winfo_rootx(), c.winfo_rooty()
             cw, ch = c.winfo_width(), c.winfo_height()
             dx = min(abs(x - cx), abs(x - (cx + cw)))
             dy = min(abs(y - cy), abs(y - (cy + ch)))
-            return 'v' if dy < dx else 'h'
+            return "v" if dy < dx else "h"
         except Exception:
-            return 'h'
+            return "h"
 
     def _ensure_module_orientation(self, mod_id: int, orient: str):
         module = (getattr(self, "_modules", {}) or {}).get(mod_id)
-        if not module: return
-        o = 'v' if orient == 'v' else 'h'
-        if module.get('orient','h') != o:
-            module['orient'] = o
+        if not module:
+            return
+        o = "v" if orient == "v" else "h"
+        if module.get("orient", "h") != o:
+            module["orient"] = o
             self._repack_module_buttons(mod_id)
 
     def _compute_insert_index(self, mod_id: int, orient: str, x: int, y: int) -> int:
         module = (getattr(self, "_modules", {}) or {}).get(mod_id)
-        if not module: return 1_000_000
+        if not module:
+            return 1_000_000
         c = module["content"]
-        children = [w for w in list(c.winfo_children()) if not getattr(w, "_is_preview", False)]
+        children = [
+            w for w in list(c.winfo_children()) if not getattr(w, "_is_preview", False)
+        ]
         if not children:
             return 0
         try:
-            if orient == 'v':
-                items = sorted([(w, w.winfo_rooty() + w.winfo_height()//2) for w in children], key=lambda t:t[1])
+            if orient == "v":
+                items = sorted(
+                    [(w, w.winfo_rooty() + w.winfo_height() // 2)
+                     for w in children],
+                    key=lambda t: t[1],
+                )
                 for i, (_w, mid) in enumerate(items):
                     if y < mid:
                         return i
                 return len(items)
             else:
-                items = sorted([(w, w.winfo_rootx() + w.winfo_width()//2) for w in children], key=lambda t:t[1])
+                items = sorted(
+                    [(w, w.winfo_rootx() + w.winfo_width() // 2)
+                     for w in children],
+                    key=lambda t: t[1],
+                )
                 for i, (_w, mid) in enumerate(items):
                     if x < mid:
                         return i
@@ -2671,30 +3147,45 @@ class NoClicApp:
             # Compute target placement ignoring current preview
             idx = self._compute_insert_index(mod_id, orient, x, y)
             self._ensure_module_orientation(mod_id, orient)
-            side = 'left' if module.get('orient','h') == 'h' else 'top'
+            side = "left" if module.get("orient", "h") == "h" else "top"
 
             prev = getattr(self, "_mod_preview", None)
             ph = None
-            if isinstance(prev, dict) and prev.get("mod_id") == mod_id and prev.get("orient") == orient:
+            if (
+                isinstance(prev, dict)
+                and prev.get("mod_id") == mod_id
+                and prev.get("orient") == orient
+            ):
                 ph = prev.get("widget") if prev else None
 
             # Create placeholder if missing
-            if ph is None or not getattr(ph, 'winfo_exists', lambda:0)():
+            if ph is None or not getattr(ph, "winfo_exists", lambda: 0)():
                 # Determine typical size from first child
                 btn_w, btn_h = BTN_W, BTN_H
                 try:
-                    for cw in [w for w in content.winfo_children() if not getattr(w, "_is_preview", False)]:
+                    for cw in [
+                        w
+                        for w in content.winfo_children()
+                        if not getattr(w, "_is_preview", False)
+                    ]:
                         btn_w = max(btn_w, int(cw.winfo_reqwidth()))
                         btn_h = max(btn_h, int(cw.winfo_reqheight()))
                         break
                 except Exception:
                     pass
-                ph = ctk.CTkFrame(content, width=btn_w, height=btn_h, fg_color="#58616b")
+                ph = ctk.CTkFrame(
+                    content, width=btn_w, height=btn_h, fg_color="#58616b"
+                )
                 ph._is_preview = True
 
             # Move placeholder only if target changed
             changed = True
-            if isinstance(prev, dict) and prev.get("index") == idx and prev.get("orient") == orient and prev.get("mod_id") == mod_id:
+            if (
+                isinstance(prev, dict)
+                and prev.get("index") == idx
+                and prev.get("orient") == orient
+                and prev.get("mod_id") == mod_id
+            ):
                 changed = False
 
             if changed:
@@ -2703,11 +3194,16 @@ class NoClicApp:
                 except Exception:
                     pass
                 # Determine widget to pack before, excluding preview itself
-                children = [w for w in content.winfo_children() if not getattr(w, "_is_preview", False)]
+                children = [
+                    w
+                    for w in content.winfo_children()
+                    if not getattr(w, "_is_preview", False)
+                ]
                 target_before = children[idx] if idx < len(children) else None
                 try:
                     if target_before is not None:
-                        ph.pack(side=side, padx=10, pady=6, before=target_before)
+                        ph.pack(side=side, padx=10, pady=6,
+                                before=target_before)
                     else:
                         ph.pack(side=side, padx=10, pady=6)
                 except Exception:
@@ -2718,7 +3214,12 @@ class NoClicApp:
                 # Resize module only when layout changed
                 self._resize_module(mod_id)
 
-            self._mod_preview = {"mod_id": mod_id, "orient": orient, "index": idx, "widget": ph}
+            self._mod_preview = {
+                "mod_id": mod_id,
+                "orient": orient,
+                "index": idx,
+                "widget": ph,
+            }
             self._mod_preview_ts = now
         except Exception:
             pass
@@ -2748,7 +3249,12 @@ class NoClicApp:
                 w = m.get("win")
                 wx, wy = w.winfo_x(), w.winfo_y()
                 ww, wh = w.winfo_width(), w.winfo_height()
-                if x is not None and y is not None and wx <= x <= wx+ww and wy <= y <= wy+wh:
+                if (
+                    x is not None
+                    and y is not None
+                    and wx <= x <= wx + ww
+                    and wy <= y <= wy + wh
+                ):
                     return mod_id
         except Exception:
             pass
@@ -2761,7 +3267,8 @@ class NoClicApp:
         for mod_id, m in list(modules.items()):
             if m.get("win") == win:
                 target = mod_id
-                hwnd_to_remove = m.get("hwnd") or getattr(win, "_hud_hwnd", None)
+                hwnd_to_remove = m.get("hwnd") or getattr(
+                    win, "_hud_hwnd", None)
                 break
         if hwnd_to_remove is None:
             hwnd_to_remove = getattr(win, "_hud_hwnd", None)
@@ -2829,39 +3336,60 @@ class NoClicApp:
             if key in self.active_extensions:
                 continue
             b = ctk.CTkButton(
-                inner, text=ext["label"], width=SHELF_BTN_W, height=SHELF_BTN_H,
-                corner_radius=SHELF_CORNER, font=SHELF_BTN_FONT,
-                fg_color=SHELF_BTN_FG, hover_color=SHELF_BTN_HOVER,
+                inner,
+                text=ext["label"],
+                width=SHELF_BTN_W,
+                height=SHELF_BTN_H,
+                corner_radius=SHELF_CORNER,
+                font=SHELF_BTN_FONT,
+                fg_color=SHELF_BTN_FG,
+                hover_color=SHELF_BTN_HOVER,
                 text_color=SHELF_BTN_TEXT,
-                command=lambda k=key: add_to_toolbar(k)
+                command=lambda k=key: add_to_toolbar(k),
             )
             try:
                 b._ext_key = key
             except Exception:
                 pass
             self._bind_drag_out(b, key, from_shelf=True)
-            show_hint, clear_hint = self._prepare_hover_hint(b, ext.get("hint"))
+            show_hint, clear_hint = self._prepare_hover_hint(
+                b, ext.get("hint"))
             self._attach_extension_hover(b, show_hint, clear_hint)
             self._shelf_widgets.append(b)
             buttons.append(b)
 
         if not buttons:
-            lbl = ctk.CTkLabel(inner, text="Aucune extension disponible", text_color="#cccccc")
+            lbl = ctk.CTkLabel(
+                inner, text="Aucune extension disponible", text_color="#cccccc"
+            )
             lbl.grid(row=0, column=0, padx=6, pady=4, sticky="w")
             self._shelf_widgets.append(lbl)
             try:
                 inner.update_idletasks()
-                pad_top = SHELF_PADY[0] if isinstance(SHELF_PADY, (tuple, list)) else (SHELF_PADY or 0)
-                pad_bottom = SHELF_PADY[1] if isinstance(SHELF_PADY, (tuple, list)) else (SHELF_PADY or 0)
-                row_height = max(0, int(inner.winfo_reqheight()) + int(pad_top) + int(pad_bottom))
+                pad_top = (
+                    SHELF_PADY[0]
+                    if isinstance(SHELF_PADY, (tuple, list))
+                    else (SHELF_PADY or 0)
+                )
+                pad_bottom = (
+                    SHELF_PADY[1]
+                    if isinstance(SHELF_PADY, (tuple, list))
+                    else (SHELF_PADY or 0)
+                )
+                row_height = max(
+                    0, int(inner.winfo_reqheight()) +
+                    int(pad_top) + int(pad_bottom)
+                )
                 self._shelf_row.configure(height=row_height)
                 self._current_shelf_height = row_height
                 self._resize_root_height()
             except Exception:
                 pass
         else:
+
             def _redraw(_=None, frame=inner, btns=buttons):
                 self._layout_shelf_buttons(frame, btns)
+
             inner.bind("<Configure>", _redraw)
             _redraw()
 
@@ -2945,39 +3473,59 @@ class NoClicApp:
         buttons = []
         for key, ext in self._extensions.items():
             b = ctk.CTkButton(
-                inner, text=ext["label"], width=SHELF_BTN_W, height=SHELF_BTN_H,
-                corner_radius=SHELF_CORNER, font=SHELF_BTN_FONT,
-                fg_color=SHELF_BTN_FG, hover_color=SHELF_BTN_HOVER,
+                inner,
+                text=ext["label"],
+                width=SHELF_BTN_W,
+                height=SHELF_BTN_H,
+                corner_radius=SHELF_CORNER,
+                font=SHELF_BTN_FONT,
+                fg_color=SHELF_BTN_FG,
+                hover_color=SHELF_BTN_HOVER,
                 text_color=SHELF_BTN_TEXT,
-                command=lambda k=key: add_to_toolbar(k)
+                command=lambda k=key: add_to_toolbar(k),
             )
             try:
                 b._ext_key = key
             except Exception:
                 pass
             self._bind_drag_out(b, key, from_shelf=True)
-            show_hint, clear_hint = self._prepare_hover_hint(b, ext.get("hint"))
+            show_hint, clear_hint = self._prepare_hover_hint(
+                b, ext.get("hint"))
             self._attach_extension_hover(b, show_hint, clear_hint)
             self._shelf_widgets.append(b)
             buttons.append(b)
 
         if not buttons:
-            lbl = ctk.CTkLabel(inner, text="Aucune extension", text_color="#cccccc")
+            lbl = ctk.CTkLabel(
+                inner, text="Aucune extension", text_color="#cccccc")
             lbl.grid(row=0, column=0, padx=6, pady=4, sticky="w")
             self._shelf_widgets.append(lbl)
             try:
                 inner.update_idletasks()
-                pad_top = SHELF_PADY[0] if isinstance(SHELF_PADY, (tuple, list)) else (SHELF_PADY or 0)
-                pad_bottom = SHELF_PADY[1] if isinstance(SHELF_PADY, (tuple, list)) else (SHELF_PADY or 0)
-                row_height = max(0, int(inner.winfo_reqheight()) + int(pad_top) + int(pad_bottom))
+                pad_top = (
+                    SHELF_PADY[0]
+                    if isinstance(SHELF_PADY, (tuple, list))
+                    else (SHELF_PADY or 0)
+                )
+                pad_bottom = (
+                    SHELF_PADY[1]
+                    if isinstance(SHELF_PADY, (tuple, list))
+                    else (SHELF_PADY or 0)
+                )
+                row_height = max(
+                    0, int(inner.winfo_reqheight()) +
+                    int(pad_top) + int(pad_bottom)
+                )
                 self._shelf_row.configure(height=row_height)
                 self._current_shelf_height = row_height
                 self._resize_root_height()
             except Exception:
                 pass
         else:
+
             def _redraw(_=None, frame=inner, btns=buttons):
                 self._layout_shelf_buttons(frame, btns)
+
             inner.bind("<Configure>", _redraw)
             _redraw()
 
@@ -3011,7 +3559,8 @@ class NoClicApp:
 
     def _refresh_status(self):
         self.status_lbl.configure(text="ON" if self.running else "OFF")
-        self.dot_lbl.configure(text_color="#2ecc71" if self.running else "#e74c3c")
+        self.dot_lbl.configure(
+            text_color="#2ecc71" if self.running else "#e74c3c")
         if self.del_mode:
             mode = "DEL"
         elif self.ent_mode:
@@ -3071,7 +3620,9 @@ class NoClicApp:
                 if w is not None and self._is_descendant(w, widget):
                     return True
             # also block when interacting with the extensions shelf
-            if hasattr(self, "_shelf_row") and self._is_descendant(self._shelf_row, widget):
+            if hasattr(self, "_shelf_row") and self._is_descendant(
+                self._shelf_row, widget
+            ):
                 return True
         except Exception:
             pass
@@ -3097,7 +3648,9 @@ class NoClicApp:
     def _on_drag(self, e):
         if not self._drag_active:
             return
-        self.root.geometry(f"+{self.root.winfo_x()+e.x-self._drag['x']}+{self.root.winfo_y()+e.y-self._drag['y']}")
+        self.root.geometry(
+            f"+{self.root.winfo_x()+e.x-self._drag['x']}+{self.root.winfo_y()+e.y-self._drag['y']}"
+        )
 
     def _end_drag(self, _e):
         self._drag_active = False
@@ -3127,9 +3680,13 @@ class NoClicApp:
         self._set_extension_highlight("DRG", False)
         self._set_extension_highlight("VOICE", False)
         self.selection_phase_down = False
-        self.selection_arm_until = time.time() + SEL_ARM_SECONDS if self.selection_mode else 0.0
+        self.selection_arm_until = (
+            time.time() + SEL_ARM_SECONDS if self.selection_mode else 0.0
+        )
         if self.selection_mode:
-            self.hint.configure(text=f"SEL: prêt dans {SEL_ARM_SECONDS:.1f}s — placez-vous au début du texte")
+            self.hint.configure(
+                text=f"SEL: prêt dans {SEL_ARM_SECONDS:.1f}s — placez-vous au début du texte"
+            )
             self.bar.configure(progress_color=BAR_ARM)
             self._set_mode_cb("SEL")
         else:
@@ -3153,6 +3710,13 @@ class NoClicApp:
         self.pyth_started_at = 0.0
         self._set_extension_highlight("PYTH", False)
 
+    def _cancel_csharp(self):
+        """Désactive le mode CSHARP sans exécuter."""
+        self.csharp_mode = False
+        self.csharp_arm_until = 0.0
+        self.csharp_started_at = 0.0
+        self._set_extension_highlight("CSHARP", False)
+
     def _start_shot(self):
         if self.selection_mode:
             self._toggle_selection()
@@ -3168,7 +3732,9 @@ class NoClicApp:
         self.screenshot_phase_down = False
         self.shot_anchor = None
         self.screenshot_arm_until = time.time() + SHOT_ARM_SECONDS
-        self.hint.configure(text=f"SHOT: prêt dans {SHOT_ARM_SECONDS:.1f}s — placez-vous")
+        self.hint.configure(
+            text=f"SHOT: prêt dans {SHOT_ARM_SECONDS:.1f}s — placez-vous"
+        )
         self.bar.configure(progress_color=BAR_ARM)
         self._set_mode_cb("SHOT")
         self._set_extension_highlight("SHOT", True)
@@ -3194,10 +3760,48 @@ class NoClicApp:
         self.cola_mode = True
         self.cola_started_at = time.time()
         self.cola_arm_until = self.cola_started_at + COLA_ARM_SECONDS
-        self.hint.configure(text=f"COLA: prêt dans {COLA_ARM_SECONDS:.1f}s — placez-vous")
+        self.hint.configure(
+            text=f"COLA: prêt dans {COLA_ARM_SECONDS:.1f}s — placez-vous"
+        )
         self.bar.configure(progress_color=BAR_ARM)
         self._set_mode_cb("COLA")
         self._set_extension_highlight("COLA", True)
+        self._refresh_status()
+
+    def _start_selcp(self):
+        """Active/désactive le mode SELCP : sélection + copie automatique."""
+        self.selcp_mode = not self.selcp_mode
+        self.selcp_phase_down = False
+        self.selcp_arm_until = time.time() + SEL_ARM_SECONDS if self.selcp_mode else 0.0
+        if self.selcp_mode:
+            self.hint.configure(
+                text=f"SELCP: prêt dans {SEL_ARM_SECONDS:.1f}s — placez-vous au début du texte"
+            )
+            self.bar.configure(progress_color=BAR_ARM)
+            self._set_mode_cb("SELCP")
+        else:
+            self.hint.configure(text="")
+            self.bar.configure(progress_color=BAR_DEFAULT)
+            self._set_mode_cb("CLICK")
+        self._set_extension_highlight("SELCP", self.selcp_mode)
+        self._refresh_status()
+
+    def _start_seldl(self):
+        """Active/désactive le mode SELDL : sélection + suppression."""
+        self.seldl_mode = not self.seldl_mode
+        self.seldl_phase_down = False
+        self.seldl_arm_until = time.time() + SEL_ARM_SECONDS if self.seldl_mode else 0.0
+        if self.seldl_mode:
+            self.hint.configure(
+                text=f"SELDL: prêt dans {SEL_ARM_SECONDS:.1f}s — placez-vous au début du texte"
+            )
+            self.bar.configure(progress_color=BAR_ARM)
+            self._set_mode_cb("SELDL")
+        else:
+            self.hint.configure(text="")
+            self.bar.configure(progress_color=BAR_DEFAULT)
+            self._set_mode_cb("CLICK")
+        self._set_extension_highlight("SELDL", self.seldl_mode)
         self._refresh_status()
 
     def _start_col(self):
@@ -3220,7 +3824,8 @@ class NoClicApp:
         self.col_mode = True
         self.col_started_at = time.time()
         self.col_arm_until = self.col_started_at + COL_ARM_SECONDS
-        self.hint.configure(text=f"COL: prêt dans {COL_ARM_SECONDS:.1f}s — placez-vous")
+        self.hint.configure(
+            text=f"COL: prêt dans {COL_ARM_SECONDS:.1f}s — placez-vous")
         self.bar.configure(progress_color=BAR_ARM)
         self._set_mode_cb("COL")
         self._set_extension_highlight("COL", True)
@@ -3246,7 +3851,8 @@ class NoClicApp:
         self.cop_mode = True
         self.cop_started_at = time.time()
         self.cop_arm_until = self.cop_started_at + COP_ARM_SECONDS
-        self.hint.configure(text=f"COP: prêt dans {COP_ARM_SECONDS:.1f}s — placez-vous")
+        self.hint.configure(
+            text=f"COP: prêt dans {COP_ARM_SECONDS:.1f}s — placez-vous")
         self.bar.configure(progress_color=BAR_ARM)
         self._set_mode_cb("COP")
         self._set_extension_highlight("COP", True)
@@ -3277,7 +3883,9 @@ class NoClicApp:
         self.clicd_mode = True
         self.clicd_started_at = now
         self.clicd_arm_until = now + CLICD_ARM_SECONDS
-        self.hint.configure(text=f"CLICD: prêt dans {CLICD_ARM_SECONDS:.1f}s — placez-vous")
+        self.hint.configure(
+            text=f"CLICD: prêt dans {CLICD_ARM_SECONDS:.1f}s — placez-vous"
+        )
         self.bar.configure(progress_color=BAR_ARM)
         self._set_mode_cb("CLICD")
         self._set_extension_highlight("CLICD", True)
@@ -3305,7 +3913,8 @@ class NoClicApp:
         self.ent_mode = True
         self.ent_started_at = time.time()
         self.ent_arm_until = self.ent_started_at + ENT_ARM_SECONDS
-        self.hint.configure(text=f"ENT: prêt dans {ENT_ARM_SECONDS:.1f}s – placez-vous")
+        self.hint.configure(
+            text=f"ENT: prêt dans {ENT_ARM_SECONDS:.1f}s – placez-vous")
         self.bar.configure(progress_color=BAR_ARM)
         self._set_mode_cb("ENT")
         self._set_extension_highlight("ENT", True)
@@ -3338,10 +3947,47 @@ class NoClicApp:
         self.pyth_mode = True
         self.pyth_started_at = now
         self.pyth_arm_until = now + PYTH_ARM_SECONDS
-        self.hint.configure(text=f"PYTH: prêt dans {PYTH_ARM_SECONDS:.1f}s — placez-vous")
+        self.hint.configure(
+            text=f"PYTH: prêt dans {PYTH_ARM_SECONDS:.1f}s — placez-vous"
+        )
         self.bar.configure(progress_color=BAR_ARM)
         self._set_mode_cb("PYTH")
         self._set_extension_highlight("PYTH", True)
+        self._refresh_status()
+
+    def _start_csharp(self):
+        """Armement puis copie de la commande C# avant validation immédiate (Enter)."""
+        self.selection_mode = False
+        self.screenshot_mode = False
+        self.cola_mode = False
+        self.col_mode = False
+        self.cop_mode = False
+        self.clicd_mode = False
+        self.drg_mode = False
+        self.drg_holding = False
+        self.ent_mode = False
+        self.del_mode = False
+        self._cancel_csharp()
+        self._stop_voice()
+        self._set_extension_highlight("SEL", False)
+        self._set_extension_highlight("SHOT", False)
+        self._set_extension_highlight("COLA", False)
+        self._set_extension_highlight("COL", False)
+        self._set_extension_highlight("COP", False)
+        self._set_extension_highlight("CLICD", False)
+        self._set_extension_highlight("DRG", False)
+        self._set_extension_highlight("ENT", False)
+        self._set_extension_highlight("DEL", False)
+        now = time.time()
+        self.csharp_mode = True
+        self.csharp_started_at = now
+        self.csharp_arm_until = now + PYTH_ARM_SECONDS
+        self.hint.configure(
+            text=f"CSH#: prêt dans {PYTH_ARM_SECONDS:.1f}s — placez-vous"
+        )
+        self.bar.configure(progress_color=BAR_ARM)
+        self._set_mode_cb("CSHARP")
+        self._set_extension_highlight("CSHARP", True)
         self._refresh_status()
 
     def _start_del(self):
@@ -3394,7 +4040,9 @@ class NoClicApp:
         self.drg_mode = True
         self.drg_holding = False
         self.drg_arm_until = time.time() + DRG_ARM_SECONDS
-        self.hint.configure(text=f"DRG: prêt dans {DRG_ARM_SECONDS:.1f}s — placez-vous sur l’élément à déplacer")
+        self.hint.configure(
+            text=f"DRG: prêt dans {DRG_ARM_SECONDS:.1f}s — placez-vous sur l’élément à déplacer"
+        )
         self.bar.configure(progress_color=BAR_ARM)
         self._set_mode_cb("DRG")
         self._set_extension_highlight("DRG", True)
@@ -3419,7 +4067,8 @@ class NoClicApp:
         self._set_extension_highlight("CLICD", False)
         self._set_extension_highlight("PYTH", False)
         self.gpt.toggle()
-        self._set_extension_highlight("VOICE", getattr(self.gpt, 'enabled', False))
+        self._set_extension_highlight(
+            "VOICE", getattr(self.gpt, "enabled", False))
         self._refresh_status()
 
     # ---------------------- Progress UI tick ----------------------
@@ -3436,7 +4085,7 @@ class NoClicApp:
 
         while True:
             pos = pyautogui.position()
-            moved = (abs(pos[0]-prev[0]) + abs(pos[1]-prev[1])) > MOVE_EPS
+            moved = (abs(pos[0] - prev[0]) + abs(pos[1] - prev[1])) > MOVE_EPS
             now = time.time()
             try:
                 self._update_scroll_target(pos)
@@ -3456,9 +4105,13 @@ class NoClicApp:
             if self.selection_mode:
                 if now < self.selection_arm_until:
                     rest = self.selection_arm_until - now
-                    self.hint.configure(text=f"SEL: prêt dans {rest:.1f}s — placez-vous au début du texte")
+                    self.hint.configure(
+                        text=f"SEL: prêt dans {rest:.1f}s — placez-vous au début du texte"
+                    )
                     self.bar.configure(progress_color=BAR_ARM)
-                    self.progress_value = max(0.0, min(1.0, 1.0 - rest / max(SEL_ARM_SECONDS, 0.001)))
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest / max(SEL_ARM_SECONDS, 0.001))
+                    )
                     time.sleep(0.05)
                     prev = pos
                     continue
@@ -3477,8 +4130,11 @@ class NoClicApp:
                     if not self.selection_phase_down:
                         try:
                             pyautogui.mouseDown(pos[0], pos[1])
-                            log.info("[APP] SEL: mouseDown @ (%d,%d)", pos[0], pos[1])
-                            self.hint.configure(text="SEL: maintiens & déplace. Immobilise pour relâcher + copier")
+                            log.info(
+                                "[APP] SEL: mouseDown @ (%d,%d)", pos[0], pos[1])
+                            self.hint.configure(
+                                text="SEL: maintiens & déplace. Immobilise pour relâcher + copier"
+                            )
                             self.bar.configure(progress_color=BAR_OK)
                             self.selection_phase_down = True
                         except Exception as e:
@@ -3486,7 +4142,8 @@ class NoClicApp:
                     else:
                         try:
                             pyautogui.mouseUp(pos[0], pos[1])
-                            log.info("[APP] SEL: mouseUp @ (%d,%d)", pos[0], pos[1])
+                            log.info("[APP] SEL: mouseUp @ (%d,%d)",
+                                     pos[0], pos[1])
                             time.sleep(0.06)
                             kb_copy()
                             log.info("[APP] SEL: copied to clipboard")
@@ -3506,13 +4163,138 @@ class NoClicApp:
                 time.sleep(0.05)
                 continue
 
+            # ------------ SELCP mode ------------
+            if self.selcp_mode:
+                if now < self.selcp_arm_until:
+                    rest = self.selcp_arm_until - now
+                    self.hint.configure(
+                        text=f"SELCP: prêt dans {rest:.1f}s — placez-vous au début du texte"
+                    )
+                    self.bar.configure(progress_color=BAR_ARM)
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest / max(SEL_ARM_SECONDS, 0.001))
+                    )
+                    time.sleep(0.05)
+                    prev = pos
+                    continue
+
+                if not self.selcp_phase_down:
+                    # Démarrage de la sélection : clic gauche
+                    pyautogui.mouseDown()
+                    self.selcp_phase_down = True
+                    self.hint.configure(
+                        text="SELCP: déplacez pour sélectionner")
+                    self.progress_value = 0.0
+                    t0 = now  # reset du timer d'immobilité
+                    time.sleep(0.05)
+                    prev = pos
+                    continue
+
+                # Phase 2 : on suit le mouvement
+                if moved:
+                    self.progress_value = 0.0
+                    t0 = now  # reset du timer
+                else:
+                    # Pas de mouvement
+                    rest = max(0.0, SEL_ARM_SECONDS - (now - t0))
+                    if rest > 0:
+                        self.progress_value = max(
+                            0.0, min(1.0, 1.0 - rest / SEL_ARM_SECONDS)
+                        )
+                    else:
+                        # Fin : souris immobile depuis assez longtemps
+                        pyautogui.mouseUp()
+                        try:
+                            kb_copy()
+                            log.info("[APP] SELCP: texte copié")
+                            self.hint.configure(text="📋 Texte copié")
+                        except Exception as e:
+                            log.exception("SELCP finalize failed: %s", e)
+                            self.hint.configure(text="❌ Copie échouée")
+                        self.selcp_mode = False
+                        self._set_extension_highlight("SELCP", False)
+                        self.selcp_phase_down = False
+                        self.bar.configure(progress_color=BAR_DEFAULT)
+                        self._set_mode_cb("CLICK")
+                        self._refresh_status()
+                        self.progress_value = 0.0
+                        time.sleep(0.08)
+                time.sleep(0.05)
+                prev = pos
+                continue
+
+            # ------------ SELDL mode ------------
+            if self.seldl_mode:
+                if now >= self.seldl_arm_until:
+                    if not self.seldl_phase_down:
+                        pyautogui.mouseDown()
+                        self.seldl_phase_down = True
+                        self.hint.configure(
+                            text="SELDL: déplacez pour sélectionner"
+                        )
+                        t0 = now
+                        time.sleep(0.05)
+                        prev = pos
+                        continue
+                    else:
+                        if moved:
+                            t0 = now
+                            self.progress_value = 0.0
+                        else:
+                            rest = SEL_ARM_SECONDS - (now - t0)
+                            if rest > 0:
+                                self.progress_value = max(
+                                    0.0, min(1.0, 1.0 - rest / SEL_ARM_SECONDS)
+                                )
+                            else:
+                                pyautogui.mouseUp()
+                                try:
+                                    pyautogui.press("delete")
+                                    log.info("[APP] SELDL: texte supprimé")
+                                    self.hint.configure(
+                                        text="🗑️ Texte supprimé")
+                                except Exception as e:
+                                    log.exception(
+                                        "SELDL finalize failed: %s", e)
+                                    self.hint.configure(
+                                        text="❌ Suppression échouée"
+                                    )
+                                self.seldl_mode = False
+                                self._set_extension_highlight("SELDL", False)
+                                self.seldl_phase_down = False
+                                self.bar.configure(progress_color=BAR_DEFAULT)
+                                self._set_mode_cb("CLICK")
+                                self._refresh_status()
+                                self.progress_value = 0.0
+                                time.sleep(0.08)
+                        time.sleep(0.05)
+                        prev = pos
+                        continue
+                else:
+                    rest = self.seldl_arm_until - now
+                    self.hint.configure(
+                        text=f"SELDL: prêt dans {rest:.1f}s — placez-vous au début du texte"
+                    )
+                    self.bar.configure(progress_color=BAR_ARM)
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest / SEL_ARM_SECONDS)
+                    )
+                    time.sleep(0.05)
+                    prev = pos
+                    continue
+
             # ------------ SHOT mode (rectangulaire en 2 immobilités) ------------
             if self.screenshot_mode:
                 if now < self.screenshot_arm_until and not self.screenshot_phase_down:
                     rest = self.screenshot_arm_until - now
-                    self.hint.configure(text=f"SHOT: prêt dans {rest:.1f}s — placez-vous")
+                    self.hint.configure(
+                        text=f"SHOT: prêt dans {rest:.1f}s — placez-vous"
+                    )
                     self.bar.configure(progress_color=BAR_ARM)
-                    self.progress_value = max(0.0, min(1.0, 1.0 - rest / max(SHOT_ARM_SECONDS, 0.001)))
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest /
+                                 max(SHOT_ARM_SECONDS, 0.001))
+                    )
                     time.sleep(0.05)
                     prev = pos
                     continue
@@ -3530,9 +4312,13 @@ class NoClicApp:
                 if ratio >= 1.0:
                     try:
                         if USE_OS_SNIPPER and not self.screenshot_phase_down:
-                            pyautogui.hotkey('win', 'shift', 's')
-                            log.info("[APP] SHOT: Windows snipping tool opened (Win+Shift+S)")
-                            self.hint.configure(text="SHOT: outil de capture ouvert — dessinez la zone à capturer")
+                            pyautogui.hotkey("win", "shift", "s")
+                            log.info(
+                                "[APP] SHOT: Windows snipping tool opened (Win+Shift+S)"
+                            )
+                            self.hint.configure(
+                                text="SHOT: outil de capture ouvert — dessinez la zone à capturer"
+                            )
                             self._reset_shot()
                             self._set_mode_cb("CLICK")
                             self._refresh_status()
@@ -3540,13 +4326,17 @@ class NoClicApp:
                             if not self.screenshot_phase_down:
                                 self.shot_anchor = (pos[0], pos[1])
                                 self.screenshot_phase_down = True
-                                self.hint.configure(text="SHOT: lock - deplacez puis immobilisez pour valider")
+                                self.hint.configure(
+                                    text="SHOT: lock - deplacez puis immobilisez pour valider"
+                                )
                                 self.bar.configure(progress_color=BAR_OK)
-                                log.info("[APP] SHOT: anchor @ (%d,%d)", pos[0], pos[1])
+                                log.info(
+                                    "[APP] SHOT: anchor @ (%d,%d)", pos[0], pos[1])
                             else:
                                 x1, y1 = self.shot_anchor
                                 x2, y2 = pos[0], pos[1]
-                                ok, msg = screenshot_to_clipboard(x1, y1, x2, y2)
+                                ok, msg = screenshot_to_clipboard(
+                                    x1, y1, x2, y2)
                                 self.hint.configure(text=msg)
                                 log.info("[APP] SHOT: %s", msg)
                                 self._reset_shot()
@@ -3564,7 +4354,6 @@ class NoClicApp:
                 time.sleep(0.05)
                 continue
 
-            
             # ------------ DEL mode (supprimer tout) ------------
             if self.del_mode:
                 if now - self.del_started_at > DEL_TIMEOUT_SECS:
@@ -3579,9 +4368,13 @@ class NoClicApp:
 
                 if now < self.del_arm_until:
                     rest = self.del_arm_until - now
-                    self.hint.configure(text=f"DEL: pret dans {rest:.1f}s - placez-vous")
+                    self.hint.configure(
+                        text=f"DEL: pret dans {rest:.1f}s - placez-vous"
+                    )
                     self.bar.configure(progress_color=BAR_ARM)
-                    self.progress_value = max(0.0, min(1.0, 1.0 - rest / max(DEL_ARM_SECONDS, 0.001)))
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest / max(DEL_ARM_SECONDS, 0.001))
+                    )
                     time.sleep(0.05)
                     prev = pos
                     continue
@@ -3618,7 +4411,7 @@ class NoClicApp:
                     time.sleep(0.1)
                 time.sleep(0.05)
                 continue
-# ------------ COLA mode (remplacement intégral) ------------
+            # ------------ COLA mode (remplacement intégral) ------------
             if self.cola_mode:
                 if now - self.cola_started_at > COLA_TIMEOUT_SECS:
                     self.cola_mode = False
@@ -3632,9 +4425,14 @@ class NoClicApp:
 
                 if now < self.cola_arm_until:
                     rest = self.cola_arm_until - now
-                    self.hint.configure(text=f"COLA: prêt dans {rest:.1f}s — placez-vous")
+                    self.hint.configure(
+                        text=f"COLA: prêt dans {rest:.1f}s — placez-vous"
+                    )
                     self.bar.configure(progress_color=BAR_ARM)
-                    self.progress_value = max(0.0, min(1.0, 1.0 - rest / max(COLA_ARM_SECONDS, 0.001)))
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest /
+                                 max(COLA_ARM_SECONDS, 0.001))
+                    )
                     time.sleep(0.05)
                     prev = pos
                     continue
@@ -3651,7 +4449,7 @@ class NoClicApp:
                 self.progress_value = ratio
                 if ratio >= 1.0:
                     try:
-                        pyautogui.click(pos[0], pos[1])   # focus
+                        pyautogui.click(pos[0], pos[1])  # focus
                         time.sleep(0.06)
                         kb_select_all()
                         time.sleep(0.02)
@@ -3688,9 +4486,13 @@ class NoClicApp:
 
                 if now < self.col_arm_until:
                     rest = self.col_arm_until - now
-                    self.hint.configure(text=f"COL: prêt dans {rest:.1f}s — placez-vous")
+                    self.hint.configure(
+                        text=f"COL: prêt dans {rest:.1f}s — placez-vous"
+                    )
                     self.bar.configure(progress_color=BAR_ARM)
-                    self.progress_value = max(0.0, min(1.0, 1.0 - rest / max(COL_ARM_SECONDS, 0.001)))
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest / max(COL_ARM_SECONDS, 0.001))
+                    )
                     time.sleep(0.05)
                     prev = pos
                     continue
@@ -3707,9 +4509,9 @@ class NoClicApp:
                 self.progress_value = ratio
                 if ratio >= 1.0:
                     try:
-                        pyautogui.click(pos[0], pos[1])   # focus
+                        pyautogui.click(pos[0], pos[1])  # focus
                         time.sleep(0.06)
-                        kb_paste()                         # coller uniquement
+                        kb_paste()  # coller uniquement
                         log.info("[APP] COL: pasted clipboard (simple)")
                         self.hint.configure(text="COL: collé ?")
                     except Exception as e:
@@ -3740,9 +4542,13 @@ class NoClicApp:
 
                 if now < self.cop_arm_until:
                     rest = self.cop_arm_until - now
-                    self.hint.configure(text=f"COP: prêt dans {rest:.1f}s — placez-vous")
+                    self.hint.configure(
+                        text=f"COP: prêt dans {rest:.1f}s — placez-vous"
+                    )
                     self.bar.configure(progress_color=BAR_ARM)
-                    self.progress_value = max(0.0, min(1.0, 1.0 - rest / max(COP_ARM_SECONDS, 0.001)))
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest / max(COP_ARM_SECONDS, 0.001))
+                    )
                     time.sleep(0.05)
                     prev = pos
                     continue
@@ -3759,10 +4565,11 @@ class NoClicApp:
                 self.progress_value = ratio
                 if ratio >= 1.0:
                     try:
-                        pyautogui.click(pos[0], pos[1])   # focus
+                        pyautogui.click(pos[0], pos[1])  # focus
                         time.sleep(0.06)
-                        kb_copy_all()                     # Ctrl+A puis Ctrl+C
-                        log.info("[APP] COP: copied selection (Ctrl+A then Ctrl+C)")
+                        kb_copy_all()  # Ctrl+A puis Ctrl+C
+                        log.info(
+                            "[APP] COP: copied selection (Ctrl+A then Ctrl+C)")
                         self.hint.configure(text="COP: copié ?")
                     except Exception as e:
                         log.exception("COP failed: %s", e)
@@ -3792,9 +4599,13 @@ class NoClicApp:
 
                 if now < self.ent_arm_until:
                     rest = self.ent_arm_until - now
-                    self.hint.configure(text=f"ENT: prêt dans {rest:.1f}s – placez-vous")
+                    self.hint.configure(
+                        text=f"ENT: prêt dans {rest:.1f}s – placez-vous"
+                    )
                     self.bar.configure(progress_color=BAR_ARM)
-                    self.progress_value = max(0.0, min(1.0, 1.0 - rest / max(ENT_ARM_SECONDS, 0.001)))
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest / max(ENT_ARM_SECONDS, 0.001))
+                    )
                     time.sleep(0.05)
                     prev = pos
                     continue
@@ -3811,9 +4622,9 @@ class NoClicApp:
                 self.progress_value = ratio
                 if ratio >= 1.0:
                     try:
-                        pyautogui.click(pos[0], pos[1])   # focus
+                        pyautogui.click(pos[0], pos[1])  # focus
                         time.sleep(0.06)
-                        pyautogui.press("enter")         # appuie sur Entrée
+                        pyautogui.press("enter")  # appuie sur Entrée
                         log.info("[APP] ENT: Enter pressed")
                         self.hint.configure(text="ENT: entrée envoyée")
                     except Exception as e:
@@ -3830,6 +4641,62 @@ class NoClicApp:
                 time.sleep(0.05)
                 continue
 
+            # ------------ CSHARP mode (écrire commande C# + Enter) ------------
+
+            if self.csharp_mode:
+                if now - self.csharp_started_at > PYTH_TIMEOUT_SECS:
+                    self.csharp_mode = False
+                    self._set_extension_highlight("CSHARP", False)
+                    self.bar.configure(progress_color=BAR_DEFAULT)
+                    self.hint.configure(text="CSH#: délai dépassé")
+                    self._set_mode_cb("CLICK")
+                    self._refresh_status()
+                    continue
+
+                if now < self.csharp_arm_until:
+                    rest = self.csharp_arm_until - now
+                    self.hint.configure(text=f"CSH#: prêt dans {rest:.1f}s")
+                    self.bar.configure(progress_color=BAR_ARM)
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest / max(PYTH_ARM_SECONDS, 0.001)))
+                    time.sleep(0.05)
+                    continue
+
+                try:
+                    # Clic pour focus
+                    x, y = pyautogui.position()
+                    pyautogui.click(x, y)
+                    time.sleep(0.05)
+
+                    # Copier la commande dans le presse-papiers
+                    kb_copy()
+                    time.sleep(1.5)
+                    self._set_clipboard_text(self._csharp_command)
+                    time.sleep(0.05)
+
+                    # Sélectionner tout + coller
+                    kb_select_all()
+                    time.sleep(0.05)
+                    kb_paste()
+                    time.sleep(0.05)
+
+                    # Valider avec Entrée
+                    pyautogui.press("enter")
+                    log.info("[APP] CSHARP: commande envoyée")
+                    self.hint.configure(text="CSH#: commande envoyée")
+                except Exception as e:
+                    log.exception("CSHARP failed: %s", e)
+                    self.hint.configure(text="CSH#: erreur")
+
+                # Réinitialiser
+                self.csharp_mode = False
+                self._set_extension_highlight("CSHARP", False)
+                self.bar.configure(progress_color=BAR_DEFAULT)
+                self._set_mode_cb("CLICK")
+                self._refresh_status()
+                time.sleep(0.1)
+                continue
+
             # ------------ PYTH mode (écrire python main.py + Enter) ------------
             if self.pyth_mode:
                 if now - self.pyth_started_at > PYTH_TIMEOUT_SECS:
@@ -3844,9 +4711,14 @@ class NoClicApp:
 
                 if now < self.pyth_arm_until:
                     rest = self.pyth_arm_until - now
-                    self.hint.configure(text=f"PYTH: prêt dans {rest:.1f}s — placez-vous")
+                    self.hint.configure(
+                        text=f"PYTH: prêt dans {rest:.1f}s — placez-vous"
+                    )
                     self.bar.configure(progress_color=BAR_ARM)
-                    self.progress_value = max(0.0, min(1.0, 1.0 - rest / max(PYTH_ARM_SECONDS, 0.001)))
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest /
+                                    max(PYTH_ARM_SECONDS, 0.001))
+                    )
                     time.sleep(0.05)
                     prev = pos
                     continue
@@ -3892,7 +4764,66 @@ class NoClicApp:
                     time.sleep(0.12)
                 time.sleep(0.05)
                 continue
+# ------------ CSHARP mode (écrire commande C# + Enter) ------------
+            if self.csharp_mode:
+                if now - self.csharp_started_at > PYTH_TIMEOUT_SECS:
+                    self.csharp_mode = False
+                    self._set_extension_highlight("CSHARP", False)
+                    self.bar.configure(progress_color=BAR_DEFAULT)
+                    self.hint.configure(text="CSH#: délai dépassé")
+                    self._set_mode_cb("CLICK")
+                    self._refresh_status()
+                    time.sleep(0.05)
+                    continue
 
+                if now < self.csharp_arm_until:
+                    rest = self.csharp_arm_until - now
+                    self.hint.configure(
+                        text=f"CSH#: prêt dans {rest:.1f}s — placez-vous"
+                    )
+                    self.bar.configure(progress_color=BAR_ARM)
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest / max(PYTH_ARM_SECONDS, 0.001))
+                    )
+                    time.sleep(0.05)
+                    prev = pos
+                    continue
+
+                try:
+                    # Clic pour focus
+                    x, y = pyautogui.position()
+                    pyautogui.click(x, y)
+                    time.sleep(0.05)
+
+                    # Copier la commande dans le presse-papiers
+                    kb_copy()
+                    time.sleep(1.5)
+                    self._set_clipboard_text(self._csharp_command)
+                    time.sleep(0.05)
+
+                    # Sélectionner tout + coller
+                    kb_select_all()
+                    time.sleep(0.05)
+                    kb_paste()
+                    time.sleep(0.05)
+
+                    # Valider avec Entrée
+                    pyautogui.press("enter")
+                    log.info("[APP] CSHARP: commande envoyée")
+                    self.hint.configure(text="CSH#: commande envoyée")
+                except Exception as e:
+                    log.exception("CSHARP failed: %s", e)
+                    self.hint.configure(text="CSH#: erreur (voir logs)")
+
+                # Réinitialiser le mode
+                self.csharp_mode = False
+                self._set_extension_highlight("CSHARP", False)
+                self.bar.configure(progress_color=BAR_DEFAULT)
+                self._set_mode_cb("CLICK")
+                self._refresh_status()
+                time.sleep(0.12)
+                continue
+            
             # ------------ CLICD mode (clic droit sur immobilisation) ------------
             if self.clicd_mode:
                 if now - self.clicd_started_at > CLICD_TIMEOUT_SECS:
@@ -3907,9 +4838,14 @@ class NoClicApp:
 
                 if now < self.clicd_arm_until:
                     rest = self.clicd_arm_until - now
-                    self.hint.configure(text=f"CLICD: prêt dans {rest:.1f}s — placez-vous")
+                    self.hint.configure(
+                        text=f"CLICD: prêt dans {rest:.1f}s — placez-vous"
+                    )
                     self.bar.configure(progress_color=BAR_ARM)
-                    self.progress_value = max(0.0, min(1.0, 1.0 - rest / max(CLICD_ARM_SECONDS, 0.001)))
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest /
+                                    max(CLICD_ARM_SECONDS, 0.001))
+                    )
                     time.sleep(0.05)
                     prev = pos
                     continue
@@ -3927,7 +4863,8 @@ class NoClicApp:
                 if ratio >= 1.0:
                     try:
                         pyautogui.click(pos[0], pos[1], button="right")
-                        log.info("[APP] CLICD: right click @ (%d,%d)", pos[0], pos[1])
+                        log.info(
+                            "[APP] CLICD: right click @ (%d,%d)", pos[0], pos[1])
                         self.hint.configure(text="CLICD: clic droit ?")
                     except Exception as e:
                         log.exception("CLICD failed: %s", e)
@@ -3948,9 +4885,13 @@ class NoClicApp:
                 # Armement initial (tu te places sur la zone à "attraper")
                 if not self.drg_holding and now < self.drg_arm_until:
                     rest = self.drg_arm_until - now
-                    self.hint.configure(text=f"DRG: prêt dans {rest:.1f}s - placez-vous sur l'élément à déplacer")
+                    self.hint.configure(
+                        text=f"DRG: prêt dans {rest:.1f}s - placez-vous sur l'élément à déplacer"
+                    )
                     self.bar.configure(progress_color=BAR_ARM)
-                    self.progress_value = max(0.0, min(1.0, 1.0 - rest / max(DRG_ARM_SECONDS, 0.001)))
+                    self.progress_value = max(
+                        0.0, min(1.0, 1.0 - rest / max(DRG_ARM_SECONDS, 0.001))
+                    )
                     time.sleep(0.05)
                     prev = pos
                     continue
@@ -3969,48 +4910,71 @@ class NoClicApp:
                     if ratio >= 1.0:
                         # Cas spécial: si curseur sur un bouton de la toolbar, on initie un drag interne d'extension
                         key_under = self._toolbar_key_at(pos[0], pos[1])
-                        if key_under is not None and key_under not in getattr(self, "_mod_of_key", {}):
+                        if key_under is not None and key_under not in getattr(
+                            self, "_mod_of_key", {}
+                        ):
                             try:
                                 # Crée un fantôme qui suit le curseur
-                                ghost = ctk.CTkFrame(self.root, corner_radius=8)
-                                label = ctk.CTkLabel(ghost, text=self._extensions[key_under]["label"]) 
+                                ghost = ctk.CTkFrame(
+                                    self.root, corner_radius=8)
+                                label = ctk.CTkLabel(
+                                    ghost, text=self._extensions[key_under]["label"]
+                                )
                                 label.pack(padx=6, pady=4)
-                                rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
+                                rx, ry = (
+                                    self.root.winfo_rootx(),
+                                    self.root.winfo_rooty(),
+                                )
                                 gx = max(0, pos[0] - rx + 8)
                                 gy = max(0, pos[1] - ry + 8)
                                 ghost.place(x=gx, y=gy)
-                                try: ghost.lift()
-                                except Exception: pass
+                                try:
+                                    ghost.lift()
+                                except Exception:
+                                    pass
                                 self._drag_toolbar_key = key_under
                                 self._drag_toolbar_ghost = ghost
-                                self.hint.configure(text="DRG: glissez l’extension hors de la barre, immobilisez pour déposer")
+                                self.hint.configure(
+                                    text="DRG: glissez l’extension hors de la barre, immobilisez pour déposer"
+                                )
                                 self.bar.configure(progress_color=BAR_OK)
                                 self.drg_holding = True
                             except Exception as e:
-                                log.exception("DRG toolbar start failed: %s", e)
+                                log.exception(
+                                    "DRG toolbar start failed: %s", e)
                                 self._drag_toolbar_key = None
                                 self._drag_toolbar_ghost = None
                                 # Fallback: comportement DRG classique
                                 try:
                                     pyautogui.mouseDown(pos[0], pos[1])
-                                    log.info("[APP] DRG: mouseDown @ (%d,%d)", pos[0], pos[1])
-                                    self.hint.configure(text="DRG: maintiens & déplace. Immobilise pour relâcher")
+                                    log.info(
+                                        "[APP] DRG: mouseDown @ (%d,%d)", pos[0], pos[1]
+                                    )
+                                    self.hint.configure(
+                                        text="DRG: maintiens & déplace. Immobilise pour relâcher"
+                                    )
                                     self.bar.configure(progress_color=BAR_OK)
                                     self.drg_holding = True
                                 except Exception as e2:
-                                    log.exception("DRG mouseDown failed: %s", e2)
+                                    log.exception(
+                                        "DRG mouseDown failed: %s", e2)
                                     self.drg_mode = False
                                     self.drg_holding = False
                                     self._set_extension_highlight("DRG", False)
-                                    self.bar.configure(progress_color=BAR_DEFAULT)
+                                    self.bar.configure(
+                                        progress_color=BAR_DEFAULT)
                                     self._set_mode_cb("CLICK")
                                     self._refresh_status()
                         else:
                             # Comportement DRG classique (hors toolbar)
                             try:
                                 pyautogui.mouseDown(pos[0], pos[1])
-                                log.info("[APP] DRG: mouseDown @ (%d,%d)", pos[0], pos[1])
-                                self.hint.configure(text="DRG: maintiens & déplace. Immobilise pour relâcher")
+                                log.info(
+                                    "[APP] DRG: mouseDown @ (%d,%d)", pos[0], pos[1]
+                                )
+                                self.hint.configure(
+                                    text="DRG: maintiens & déplace. Immobilise pour relâcher"
+                                )
                                 self.bar.configure(progress_color=BAR_OK)
                                 self.drg_holding = True
                             except Exception as e:
@@ -4033,19 +4997,33 @@ class NoClicApp:
                         try:
                             if moved:
                                 # déplace le fantôme
-                                if self._drag_toolbar_ghost is not None and self._drag_toolbar_ghost.winfo_exists() == 1:
-                                    rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
+                                if (
+                                    self._drag_toolbar_ghost is not None
+                                    and self._drag_toolbar_ghost.winfo_exists() == 1
+                                ):
+                                    rx, ry = (
+                                        self.root.winfo_rootx(),
+                                        self.root.winfo_rooty(),
+                                    )
                                     gx = max(0, pos[0] - rx + 8)
                                     gy = max(0, pos[1] - ry + 8)
-                                    self._drag_toolbar_ghost.place_configure(x=gx, y=gy)
-                                    try: self._drag_toolbar_ghost.lift()
-                                    except Exception: pass
+                                    self._drag_toolbar_ghost.place_configure(
+                                        x=gx, y=gy)
+                                    try:
+                                        self._drag_toolbar_ghost.lift()
+                                    except Exception:
+                                        pass
                                 # aperçu module sous le curseur
                                 try:
-                                    mod_id = self._find_module_at(pos[0], pos[1])
+                                    mod_id = self._find_module_at(
+                                        pos[0], pos[1])
                                     if mod_id is not None:
-                                        orient = self._decide_drop_orientation(mod_id, pos[0], pos[1])
-                                        self._show_module_preview(mod_id, orient, pos[0], pos[1])
+                                        orient = self._decide_drop_orientation(
+                                            mod_id, pos[0], pos[1]
+                                        )
+                                        self._show_module_preview(
+                                            mod_id, orient, pos[0], pos[1]
+                                        )
                                     else:
                                         self._clear_module_preview()
                                 except Exception:
@@ -4057,35 +5035,57 @@ class NoClicApp:
                                 continue
                             # immobilité => déposer
                             elapsed = now - t0
-                            ratio = max(0.0, min(elapsed / self.dwell_delay, 1.0))
+                            ratio = max(
+                                0.0, min(elapsed / self.dwell_delay, 1.0))
                             self.progress_value = ratio
                             if ratio >= 1.0:
                                 try:
                                     # Dépôt: hors HUD => créer/ajouter à un module; dans shelf => retirer de la barre
-                                    bx = self.wrap.winfo_rootx(); by = self.wrap.winfo_rooty()
-                                    bw = self.wrap.winfo_width(); bh = self.wrap.winfo_height()
-                                    outside = (pos[0] < bx) or (pos[0] > bx + bw) or (pos[1] < by) or (pos[1] > by + bh)
+                                    bx = self.wrap.winfo_rootx()
+                                    by = self.wrap.winfo_rooty()
+                                    bw = self.wrap.winfo_width()
+                                    bh = self.wrap.winfo_height()
+                                    outside = (
+                                        (pos[0] < bx)
+                                        or (pos[0] > bx + bw)
+                                        or (pos[1] < by)
+                                        or (pos[1] > by + bh)
+                                    )
                                     inside_shelf = False
                                     try:
                                         if getattr(self, "_shelf_visible", False):
-                                            sx = self._shelf_row.winfo_rootx(); sy = self._shelf_row.winfo_rooty()
-                                            sw = self._shelf_row.winfo_width(); sh = self._shelf_row.winfo_height()
-                                            inside_shelf = (sx <= pos[0] <= sx + sw) and (sy <= pos[1] <= sy + sh)
+                                            sx = self._shelf_row.winfo_rootx()
+                                            sy = self._shelf_row.winfo_rooty()
+                                            sw = self._shelf_row.winfo_width()
+                                            sh = self._shelf_row.winfo_height()
+                                            inside_shelf = (
+                                                sx <= pos[0] <= sx + sw
+                                            ) and (sy <= pos[1] <= sy + sh)
                                     except Exception:
                                         inside_shelf = False
                                     if inside_shelf:
-                                        self._remove_one_from_toolbar(self._drag_toolbar_key)
+                                        self._remove_one_from_toolbar(
+                                            self._drag_toolbar_key
+                                        )
                                     elif outside:
-                                        self._move_extension_to_floating(self._drag_toolbar_key, pos[0], pos[1])
+                                        self._move_extension_to_floating(
+                                            self._drag_toolbar_key, pos[0], pos[1]
+                                        )
                                     self.hint.configure(text="DRG: déposé ?")
                                 except Exception as e:
-                                    log.exception("DRG toolbar drop failed: %s", e)
-                                    self.hint.configure(text="DRG: erreur (voir logs)")
+                                    log.exception(
+                                        "DRG toolbar drop failed: %s", e)
+                                    self.hint.configure(
+                                        text="DRG: erreur (voir logs)")
                                 finally:
                                     self._clear_module_preview()
                                     # nettoyage fantôme
                                     try:
-                                        if self._drag_toolbar_ghost is not None and self._drag_toolbar_ghost.winfo_exists() == 1:
+                                        if (
+                                            self._drag_toolbar_ghost is not None
+                                            and self._drag_toolbar_ghost.winfo_exists()
+                                            == 1
+                                        ):
                                             self._drag_toolbar_ghost.place_forget()
                                             self._drag_toolbar_ghost.destroy()
                                     except Exception:
@@ -4096,7 +5096,8 @@ class NoClicApp:
                                     self.drg_mode = False
                                     self.drg_holding = False
                                     self._set_extension_highlight("DRG", False)
-                                    self.bar.configure(progress_color=BAR_DEFAULT)
+                                    self.bar.configure(
+                                        progress_color=BAR_DEFAULT)
                                     self._set_mode_cb("CLICK")
                                     self._refresh_status()
                                     t0 = now
@@ -4120,7 +5121,8 @@ class NoClicApp:
                     if ratio >= 1.0:
                         try:
                             pyautogui.mouseUp(pos[0], pos[1])
-                            log.info("[APP] DRG: mouseUp @ (%d,%d)", pos[0], pos[1])
+                            log.info("[APP] DRG: mouseUp @ (%d,%d)",
+                                    pos[0], pos[1])
                             self.hint.configure(text="DRG: relâché ?")
                         except Exception as e:
                             log.exception("DRG mouseUp failed: %s", e)
@@ -4140,7 +5142,9 @@ class NoClicApp:
             # ------------ Mode CLICK (par défaut) avec deadzone ------------
             if self.running:
                 if moved:
-                    if self.anchor_point and not inside_deadzone(pos, self.anchor_point, DEADZONE_RADIUS):
+                    if self.anchor_point and not inside_deadzone(
+                        pos, self.anchor_point, DEADZONE_RADIUS
+                    ):
                         self.rearm_in_deadzone = True
                     prev = pos
                     t0 = now
@@ -4150,14 +5154,21 @@ class NoClicApp:
                     ratio = max(0.0, min(elapsed / self.dwell_delay, 1.0))
                     self.progress_value = ratio
                     if ratio >= 1.0:
-                        if (self.anchor_point is None) or \
-                           (not inside_deadzone(pos, self.anchor_point, DEADZONE_RADIUS)) or \
-                           self.rearm_in_deadzone:
+                        if (
+                            (self.anchor_point is None)
+                            or (
+                                not inside_deadzone(
+                                    pos, self.anchor_point, DEADZONE_RADIUS
+                                )
+                            )
+                            or self.rearm_in_deadzone
+                        ):
                             try:
                                 pyautogui.click(pos[0], pos[1])
                                 self.anchor_point = pos
                                 self.rearm_in_deadzone = False
-                                log.info("[APP] auto-click @ (%d,%d)", pos[0], pos[1])
+                                log.info(
+                                    "[APP] auto-click @ (%d,%d)", pos[0], pos[1])
                             except Exception as e:
                                 log.exception("auto-click failed: %s", e)
                         t0 = now
@@ -4176,6 +5187,7 @@ class NoClicApp:
 # ---------- LANCEMENT EXPLICITE DE L’APPLICATION ----------
 if __name__ == "__main__":
     import multiprocessing
+
     # Important pour PyInstaller sur Windows quand des threads/process peuvent être lancés
     multiprocessing.freeze_support()
 
@@ -4187,11 +5199,13 @@ if __name__ == "__main__":
     except Exception as e:
         # Si build --console (debug), on verra la trace.
         import traceback
+
         traceback.print_exc()
         # Si build --windowed, afficher un message d'erreur visible.
         try:
             import tkinter as tk
             from tkinter import messagebox
+
             r = tk.Tk()
             r.withdraw()
             r.attributes("-topmost", True)

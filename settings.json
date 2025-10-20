@@ -1,29 +1,37 @@
 {
-  "voice_device_name": "Microphone (LCS_USB_Audio) (id:1)",
-  "voice_end_silence_secs": 1.6,
-  "voice_rms_threshold": 0.003,
-  "voice_paste_delay_secs": 2.5,
   "active_extensions": [
     "AUTO",
     "SEL",
-    "SHOT",
-    "COL",
-    "DEL",
     "COP",
-    "PYTH",
     "DRG",
-    "COLA",
-    "ENT",
-    "VOICE",
-    "CLICD"
+    "CSHARP"
   ],
-  "floating_extensions": [],
-  "floating_modules": [],
+  "floating_modules": [
+    {
+      "x": 1023,
+      "y": 276,
+      "keys": [
+        "CLICD"
+      ],
+      "orient": "h",
+      "config": 0
+    }
+  ],
+  "floating_extensions": [
+    {
+      "key": "CLICD",
+      "x": 1023,
+      "y": 276
+    }
+  ],
   "config_states": [
-    1,
     2,
-    1,
+    0,
+    0,
     0
   ],
-  "config_active": 1
+  "config_active": 0,
+  "voice_end_silence_secs": 1.6,
+  "voice_rms_threshold": 0.003,
+  "voice_paste_delay_secs": 2.5
 }

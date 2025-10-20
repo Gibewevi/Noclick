@@ -44,3 +44,10 @@ def delete_and_backspace() -> None:
         pyautogui.press("backspace")
     except Exception:
         pass
+
+
+def select_and_copy_current() -> None:
+    """Select all text and copy it to the clipboard (SELCP macro)."""
+    select_all_text()
+    time.sleep(0.05)
+    copy_selection_to_clipboard()
